@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod netease_api;
+pub mod player;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
