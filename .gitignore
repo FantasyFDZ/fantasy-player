@@ -33,3 +33,5 @@ Thumbs.db
 
 # Python sidecar
 sidecar/__pycache__/
+sidecar/models/*.pb
+sidecar/models/*.json

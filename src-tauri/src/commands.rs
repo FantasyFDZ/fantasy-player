@@ -571,8 +571,16 @@ pub async fn analyze_song(
     let db_for_call = Db::open_default().map_err(|e| e.to_string())?;
     let audio_url = url.url.clone();
     let song_id_for_call = song.id.clone();
+    let song_name_for_call = song.name.clone();
+    let song_artist_for_call = song.artist.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        audio_analyzer::analyze_song_blocking(&db_for_call, &song_id_for_call, &audio_url)
+        audio_analyzer::analyze_song_blocking(
+            &db_for_call,
+            &song_id_for_call,
+            &song_name_for_call,
+            &song_artist_for_call,
+            &audio_url,
+        )
     })
     .await
     .map_err(|e| e.to_string())?

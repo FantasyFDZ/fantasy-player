@@ -173,6 +173,12 @@ export interface AudioFeatures {
   mood_tags?: string[] | null;
   genre_tags?: string[] | null;
   instrument_tags?: string[] | null;
+
+  // ---- Tier 4: LLM hint ----
+  llm_bpm?: number | null;
+  llm_bpm_confidence?: string | null;
+  llm_genre?: string | null;
+  llm_genre_confidence?: string | null;
 }
 
 // ---- auth ---------------------------------------------------------------

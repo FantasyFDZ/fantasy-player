@@ -252,7 +252,16 @@ function buildPrompt(
   if (features.mood_tags && features.mood_tags.length > 0) {
     lines.push(`情绪标签：${features.mood_tags.join("、")}`);
   }
-  if (features.genre_tags && features.genre_tags.length > 0) {
+  // 风格优先用 Tier 4 LLM 给的具体标签（kimi 测试 0 hallucination），
+  // 回退到 essentia genre_tags top3
+  if (
+    features.llm_genre &&
+    features.llm_genre_confidence &&
+    features.llm_genre_confidence !== "unknown" &&
+    features.llm_genre_confidence !== "low"
+  ) {
+    lines.push(`风格倾向：${features.llm_genre}`);
+  } else if (features.genre_tags && features.genre_tags.length > 0) {
     lines.push(`风格倾向：${features.genre_tags.slice(0, 3).join(" / ")}`);
   }
 
@@ -477,12 +486,21 @@ function MetricsStrip({ features }: { features: AudioFeatures }) {
 
 /**
  * 风格栏的标签来源：
- *  1) Tier 3 genre_tags top1（最权威，需 TF 模型）
- *  2) Tier 3 mood_tags top1
- *  3) Tier 2 启发式（danceability + 调式 + 能量）
- *  4) "—"
+ *  1) Tier 4 LLM 给出的具体风格（最准，比如 city pop / dream pop）
+ *  2) Tier 3 genre_tags top1（essentia TF 模型，400 类细分）
+ *  3) Tier 3 mood_tags top1
+ *  4) Tier 2 启发式（danceability + 调式 + 能量）
+ *  5) "—"
  */
 function pickStyleLabel(f: AudioFeatures): string {
+  if (
+    f.llm_genre &&
+    f.llm_genre_confidence &&
+    f.llm_genre_confidence !== "unknown" &&
+    f.llm_genre_confidence !== "low"
+  ) {
+    return shortenStyle(f.llm_genre);
+  }
   if (f.genre_tags && f.genre_tags.length > 0) {
     return shortenStyle(f.genre_tags[0]);
   }

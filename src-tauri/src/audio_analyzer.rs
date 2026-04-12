@@ -110,6 +110,19 @@ pub struct AudioFeatures {
     pub genre_tags: Option<Vec<String>>,
     #[serde(default)]
     pub instrument_tags: Option<Vec<String>>,
+
+    // ---- Tier 4: LLM hint（基于 song.name + song.artist 查 LLM）----
+    /// LLM 给出的 BPM 估计；high/medium confidence 时用于校准 essentia
+    #[serde(default)]
+    pub llm_bpm: Option<f64>,
+    /// LLM 自报置信度："high" | "medium" | "low" | "unknown"
+    #[serde(default)]
+    pub llm_bpm_confidence: Option<String>,
+    /// LLM 给出的具体风格标签（如 "city pop" / "mandopop ballad"）
+    #[serde(default)]
+    pub llm_genre: Option<String>,
+    #[serde(default)]
+    pub llm_genre_confidence: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -191,12 +204,17 @@ fn script_path() -> Result<PathBuf, AnalyzeError> {
 
 // ---- core logic ------------------------------------------------------------
 
-/// 分析一首歌：先查 cache，未命中则下载 + 分析 + 写 cache。
+/// 分析一首歌：先查 cache，未命中则下载 + 分析 + LLM hint + 写 cache。
 /// 注意这是一个阻塞函数（下载用 blocking reqwest，python sidecar 是同步 spawn）——
 /// 调用方应在 tokio spawn_blocking 里使用。
+///
+/// `song_name` 和 `song_artist` 用于 LLM hint 查询。如果都是空字符串，
+/// LLM hint 会被跳过（保持纯 essentia 路径）。
 pub fn analyze_song_blocking(
     db: &Db,
     song_id: &str,
+    song_name: &str,
+    song_artist: &str,
     audio_url: &str,
 ) -> Result<AudioFeatures, AnalyzeError> {
     if let Some(cached) = db.song_feature_get(song_id)? {
@@ -220,7 +238,7 @@ pub fn analyze_song_blocking(
 
     // 分析
     let t_analyze = Instant::now();
-    let features = run_sidecar(tmp.path())?;
+    let mut features = run_sidecar(tmp.path())?;
     eprintln!(
         "[audio_analyzer] {} essentia+librosa analyzed in {:.2}s \
          (bpm={:.1} conf={:.2}, key={} conf={:.2})",
@@ -232,6 +250,51 @@ pub fn analyze_song_blocking(
         features.key_confidence,
     );
 
+    // ---- LLM hint：BPM + 风格 ------------------------------------------
+    // 用 song.name + song.artist 查 LLM 拿 BPM 和风格估计。
+    // 失败一律静默降级（不阻塞主路径），用作 sanity check 而非主源。
+    if !song_name.is_empty() {
+        let t_hint = Instant::now();
+        if let Some(hint) = query_llm_hint(db, song_name, song_artist) {
+            eprintln!(
+                "[audio_analyzer] {} llm hint in {:.2}s: bpm={:?}({:?}) genre={:?}({:?})",
+                song_id,
+                t_hint.elapsed().as_secs_f64(),
+                hint.bpm,
+                hint.bpm_confidence,
+                hint.genre,
+                hint.genre_confidence,
+            );
+            // BPM 校准：high/medium 置信度且和 essentia 差距 > 5% → 信任 LLM
+            if let (Some(llm_bpm), Some(conf)) = (hint.bpm, hint.bpm_confidence.as_deref()) {
+                let trust = matches!(conf, "high" | "medium");
+                let diff_ratio = (features.bpm - llm_bpm).abs() / features.bpm.max(1.0);
+                if trust && diff_ratio > 0.05 {
+                    eprintln!(
+                        "[audio_analyzer] {} bpm overridden by LLM: {:.1} → {:.1}",
+                        song_id, features.bpm, llm_bpm
+                    );
+                    if !features.bpm_candidates.contains(&features.bpm.round()) {
+                        features.bpm_candidates.push(features.bpm.round());
+                    }
+                    features.bpm = llm_bpm;
+                    // 给一个略高的置信度（比 essentia 默认强一档）
+                    features.bpm_confidence = features.bpm_confidence.max(0.75);
+                }
+                features.llm_bpm = Some(llm_bpm);
+            }
+            features.llm_bpm_confidence = hint.bpm_confidence;
+            features.llm_genre = hint.genre;
+            features.llm_genre_confidence = hint.genre_confidence;
+        } else {
+            eprintln!(
+                "[audio_analyzer] {} llm hint skipped/failed in {:.2}s",
+                song_id,
+                t_hint.elapsed().as_secs_f64()
+            );
+        }
+    }
+
     // 回写缓存
     db.song_feature_upsert(song_id, &features)?;
     eprintln!(
@@ -242,6 +305,167 @@ pub fn analyze_song_blocking(
 
     drop(tmp);
     Ok(features)
+}
+
+// ---- LLM hint ---------------------------------------------------------------
+
+#[derive(Debug, Default)]
+struct LlmHint {
+    bpm: Option<f64>,
+    bpm_confidence: Option<String>,
+    genre: Option<String>,
+    genre_confidence: Option<String>,
+}
+
+/// 用同步 reqwest 直接调用 OpenAI 兼容 chat/completions，避免把 async
+/// 上下文拖进这个 blocking 路径。
+///
+/// 偏好顺序基于 14 首歌 × 6 模型测试：kimi-k2.5 综合 0 hallucination，
+/// mimo-v2-pro / mimo-v2-omni 同样 0 hallucination 但稍慢。glm-5 在
+/// 中文歌上有系统性翻倍倾向（直接 ban）。
+fn query_llm_hint(db: &Db, song_name: &str, artist: &str) -> Option<LlmHint> {
+    // 偏好的 (provider_id, model) 列表
+    const PREFERRED: &[(&str, &str)] = &[
+        ("dashscope", "kimi-k2.5"),
+        ("mimo", "mimo-v2-pro"),
+        ("mimo", "mimo-v2-omni"),
+        ("dashscope", "qwen3.5-plus"),
+    ];
+
+    let providers = db.provider_list().ok()?;
+    let chosen = PREFERRED.iter().find_map(|(pid, model)| {
+        let p = providers.iter().find(|r| r.id == *pid)?;
+        if p.api_key.trim().is_empty() {
+            return None;
+        }
+        let models: Vec<String> =
+            serde_json::from_str(&p.models_json).unwrap_or_default();
+        if models.contains(&(*model).to_string()) {
+            Some((p.clone(), (*model).to_string()))
+        } else {
+            None
+        }
+    })?;
+
+    let (provider, model) = chosen;
+
+    let prompt = format!(
+        "请告诉我下面这首歌的 BPM 和具体风格。\n\n\
+         要求：\n\
+         - 只回答一个 JSON 对象，不要任何解释或前后文\n\
+         - 格式：{{\"bpm\": 数字, \"bpm_confidence\": \"high|medium|low|unknown\", \
+         \"genre\": \"具体风格标签\", \"genre_confidence\": \"high|medium|low|unknown\"}}\n\
+         - genre 写具体的细分风格（比如 city pop / dream pop / synthwave / \
+         mandopop ballad / 民谣 / shoegaze / R&B / neo-classical / trap），\
+         不要只写「流行」这种笼统词\n\
+         - 不知道时 confidence 用 unknown，对应字段用 null\n\
+         - 不要猜测，宁可 unknown 也不要瞎编\n\
+         - 如果歌曲有 half-time 争议，给主流 tempo 不是 half\n\n\
+         歌曲：{} - {}",
+        song_name, artist
+    );
+
+    let url = join_url_simple(&provider.base_url, "chat/completions");
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [
+            { "role": "user", "content": prompt }
+        ],
+        "temperature": 0.0,
+        "max_tokens": 1024,
+        "enable_thinking": false,
+    });
+
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("melody/0.1.0")
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .ok()?;
+
+    let resp = client
+        .post(&url)
+        .bearer_auth(&provider.api_key)
+        .json(&body)
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let text = resp.text().ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let content = v
+        .get("choices")?
+        .get(0)?
+        .get("message")?
+        .get("content")?
+        .as_str()?
+        .to_string();
+
+    // 剥 think
+    let cleaned = strip_think(&content);
+    // 提取 JSON 对象
+    let json_obj = extract_first_json(&cleaned)?;
+    let parsed: serde_json::Value = serde_json::from_str(&json_obj).ok()?;
+
+    let bpm = parsed.get("bpm").and_then(|x| x.as_f64());
+    let bpm_confidence = parsed
+        .get("bpm_confidence")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string());
+    let genre = parsed
+        .get("genre")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let genre_confidence = parsed
+        .get("genre_confidence")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string());
+
+    Some(LlmHint {
+        bpm,
+        bpm_confidence,
+        genre,
+        genre_confidence,
+    })
+}
+
+fn join_url_simple(base: &str, path: &str) -> String {
+    let base = base.trim_end_matches('/');
+    let path = path.trim_start_matches('/');
+    format!("{base}/{path}")
+}
+
+fn strip_think(s: &str) -> String {
+    // 简单剥 <think>...</think>，可能多次出现
+    let mut out = s.to_string();
+    while let (Some(start), Some(end_rel)) = (out.find("<think>"), out.find("</think>")) {
+        let end = end_rel + "</think>".len();
+        if end > start {
+            out.replace_range(start..end, "");
+        } else {
+            break;
+        }
+    }
+    out.trim().to_string()
+}
+
+fn extract_first_json(s: &str) -> Option<String> {
+    // 找到第一个 '{' 之后做平衡括号匹配
+    let bytes = s.as_bytes();
+    let start = s.find('{')?;
+    let mut depth = 0i32;
+    for (i, &b) in bytes[start..].iter().enumerate() {
+        if b == b'{' {
+            depth += 1;
+        } else if b == b'}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(s[start..start + i + 1].to_string());
+            }
+        }
+    }
+    None
 }
 
 fn download_to_tempfile(url: &str) -> Result<tempfile::NamedTempFile, AnalyzeError> {
@@ -402,6 +626,10 @@ impl Db {
             "mood_tags": f.mood_tags,
             "genre_tags": f.genre_tags,
             "instrument_tags": f.instrument_tags,
+            "llm_bpm": f.llm_bpm,
+            "llm_bpm_confidence": f.llm_bpm_confidence,
+            "llm_genre": f.llm_genre,
+            "llm_genre_confidence": f.llm_genre_confidence,
         });
         let extra_str = serde_json::to_string(&extra).map_err(|e| {
             crate::db::DbError::Other(format!("extra_json 序列化失败: {e}"))
@@ -519,5 +747,17 @@ fn merge_extra_into(features: &mut AudioFeatures, extra: &serde_json::Value) {
     }
     if let Some(v) = obj.get("instrument_tags").cloned() {
         features.instrument_tags = from_value(v).ok();
+    }
+    if let Some(v) = obj.get("llm_bpm").cloned() {
+        features.llm_bpm = from_value(v).ok();
+    }
+    if let Some(v) = obj.get("llm_bpm_confidence").cloned() {
+        features.llm_bpm_confidence = from_value(v).ok();
+    }
+    if let Some(v) = obj.get("llm_genre").cloned() {
+        features.llm_genre = from_value(v).ok();
+    }
+    if let Some(v) = obj.get("llm_genre_confidence").cloned() {
+        features.llm_genre_confidence = from_value(v).ok();
     }
 }

@@ -406,7 +406,18 @@ class TfModelRunner:
             self.discogs_embeddings = None
         return self.discogs_embeddings
 
-    def _predict_2d(self, model_filename: str) -> np.ndarray | None:
+    def _predict_2d(
+        self,
+        model_filename: str,
+        *,
+        input_name: str = "model/Placeholder",
+        output_name: str = "model/Softmax",
+    ) -> np.ndarray | None:
+        """加载一个 .pb 头模型并对 discogs_embeddings 做预测。
+
+        每个 essentia 模型的 input/output tensor 名都不同，存在它的同名
+        .json metadata 里。这里允许调用方覆盖默认值。
+        """
         if not self.available or self.discogs_embeddings is None:
             return None
         pb = self.models_dir / model_filename
@@ -415,13 +426,16 @@ class TfModelRunner:
         try:
             from essentia.standard import TensorflowPredict2D
             head = TensorflowPredict2D(
-                graphFilename=str(pb), output="model/Softmax"
+                graphFilename=str(pb),
+                input=input_name,
+                output=output_name,
             )
             return head(self.discogs_embeddings).mean(axis=0)
         except Exception:
             return None
 
     # ---- 各任务 head ----
+    # 各 head 的 input/output 名取自 essentia 模型 metadata（.json schema）
 
     def voice_instrumental(self) -> str | None:
         out = self._predict_2d("voice_instrumental-discogs-effnet-1.pb")
@@ -457,7 +471,13 @@ class TfModelRunner:
         return labels if any_loaded else None
 
     def genre_tags(self, top_k: int = 3) -> list[str] | None:
-        out = self._predict_2d("genre_discogs400-discogs-effnet-1.pb")
+        # genre_discogs400 的 tensor 名跟 mood/voice 系列不一样，
+        # 来自模型 metadata schema
+        out = self._predict_2d(
+            "genre_discogs400-discogs-effnet-1.pb",
+            input_name="serving_default_model_Placeholder",
+            output_name="PartitionedCall:0",
+        )
         if out is None:
             return None
         idx = np.argsort(out)[::-1][:top_k]
@@ -473,7 +493,11 @@ class TfModelRunner:
         return [f"class_{i}" for i in idx]
 
     def instrument_tags(self, top_k: int = 4) -> list[str] | None:
-        out = self._predict_2d("mtg_jamendo_instrument-discogs-effnet-1.pb")
+        # mtg_jamendo_instrument 用 sigmoid 输出（多标签分类）
+        out = self._predict_2d(
+            "mtg_jamendo_instrument-discogs-effnet-1.pb",
+            output_name="model/Sigmoid",
+        )
         if out is None:
             return None
         idx = np.argsort(out)[::-1][:top_k]
