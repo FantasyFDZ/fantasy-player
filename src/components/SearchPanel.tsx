@@ -1,3 +1,8 @@
+// 搜索面板 —— Phase 2 主题化。
+//
+// 视觉：沿用父 Overlay 的木纹卡片背景；内部用半透明深色覆盖层
+// 以保证歌曲列表的可读性。
+
 import { useState } from "react";
 import { api, type Song } from "@/lib/api";
 
@@ -28,56 +33,139 @@ export function SearchPanel({ onPlay }: Props) {
   };
 
   return (
-    <div className="flex h-full flex-col gap-3">
-      <form onSubmit={handleSearch} className="flex gap-2">
+    <div className="flex h-full flex-col gap-4">
+      <div
+        className="mb-1 font-mono text-[10px] uppercase"
+        style={{
+          color: "var(--theme-wood-highlight)",
+          letterSpacing: "0.24em",
+          filter: "brightness(1.4)",
+          textShadow: "0 1px 0 rgba(0,0,0,0.7)",
+        }}
+      >
+        Catalog Search
+      </div>
+
+      {/* 搜索框 */}
+      <form onSubmit={handleSearch} className="flex gap-3">
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="搜索歌曲 / 艺人 / 专辑..."
-          className="flex-1 rounded bg-white/5 px-3 py-2 text-sm outline-none placeholder:text-white/30 focus:bg-white/10"
+          className="flex-1 rounded-md px-4 py-2.5 text-sm outline-none transition-all"
+          style={{
+            fontFamily: "var(--font-ui)",
+            background: "rgba(0,0,0,0.35)",
+            border: "1px solid rgba(0,0,0,0.45)",
+            boxShadow:
+              "inset 0 2px 4px rgba(0,0,0,0.6), inset 0 -1px 0 rgba(255,255,255,0.08)",
+            color: "rgba(255,240,220,0.95)",
+          }}
         />
         <button
           type="submit"
           disabled={loading}
-          className="rounded bg-emerald-500/80 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
+          className="rounded-md px-5 py-2.5 text-sm transition-all hover:scale-[1.02] disabled:opacity-50"
+          style={{
+            fontFamily: "var(--font-mono)",
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            color: "var(--theme-accent)",
+            background:
+              "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.3))",
+            border: "1px solid var(--theme-accent)",
+            boxShadow:
+              "inset 0 1px 0 rgba(255,255,255,0.15), 0 2px 4px rgba(0,0,0,0.5)",
+          }}
         >
-          {loading ? "搜索中..." : "搜索"}
+          {loading ? "..." : "Search"}
         </button>
       </form>
 
       {error && (
-        <div className="rounded bg-red-500/10 px-3 py-2 text-xs text-red-300">
+        <div
+          className="rounded-md px-3 py-2 text-xs"
+          style={{
+            background: "rgba(120,20,20,0.35)",
+            color: "rgba(255,200,180,0.95)",
+            border: "1px solid rgba(180,50,40,0.5)",
+          }}
+        >
           {error}
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto rounded bg-white/5">
+      {/* 结果列表 */}
+      <div
+        className="flex-1 overflow-y-auto rounded-md"
+        style={{
+          background: "rgba(0,0,0,0.35)",
+          border: "1px solid rgba(0,0,0,0.45)",
+          boxShadow: "inset 0 2px 6px rgba(0,0,0,0.6)",
+        }}
+      >
         {results.length === 0 && !loading && (
-          <div className="p-6 text-center text-sm text-white/40">
+          <div
+            className="flex h-full items-center justify-center text-sm"
+            style={{
+              color: "var(--theme-label)",
+              filter: "brightness(1.3)",
+              fontFamily: "var(--font-display)",
+            }}
+          >
             输入关键词开始搜索
           </div>
         )}
         {results.map((song, index) => (
           <button
             key={song.id}
+            type="button"
             onClick={() => onPlay(song, results.slice(index))}
-            className="flex w-full items-center gap-3 border-b border-white/5 px-3 py-2 text-left hover:bg-white/5 disabled:opacity-40"
+            className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-white/5 disabled:opacity-40"
+            style={{
+              borderBottom: "1px solid rgba(0,0,0,0.3)",
+            }}
             disabled={!song.playable}
           >
             {song.cover_url && (
               <img
                 src={song.cover_url}
                 alt=""
-                className="h-10 w-10 rounded"
+                className="h-10 w-10 rounded-sm"
+                style={{
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.6)",
+                }}
               />
             )}
             <div className="flex-1 overflow-hidden">
-              <div className="truncate text-sm font-medium">{song.name}</div>
-              <div className="truncate text-xs text-white/50">
+              <div
+                className="truncate text-[14px]"
+                style={{
+                  color: "rgba(255,240,220,0.95)",
+                  fontFamily: "var(--font-display)",
+                  fontWeight: 500,
+                }}
+              >
+                {song.name}
+              </div>
+              <div
+                className="truncate text-[11px]"
+                style={{
+                  color: "rgba(255,220,180,0.55)",
+                  fontFamily: "var(--font-mono)",
+                  letterSpacing: "0.08em",
+                }}
+              >
                 {song.artist} · {song.album}
               </div>
             </div>
-            <div className="text-xs text-white/40">
+            <div
+              className="text-[10px]"
+              style={{
+                color: "rgba(255,220,180,0.5)",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
               {formatDuration(song.duration_secs)}
             </div>
           </button>
