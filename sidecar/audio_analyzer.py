@@ -106,11 +106,11 @@ def _label_warmth(mfcc2_mean: float) -> str:
 # 抒情歌的常见错误模式：multifeature 和 Percival 都把 70 BPM 听成 140，
 # 两者一致 → rel_diff < 5% 分支接管 → 错误地"确认"翻倍。
 #
-# 修复策略（按顺序生效）：
-#   1. 先按多算法投票得到 bpm_final
-#   2. 事后 sanity check：如果 bpm_final > 100，让 librosa 在
-#      [bpm_final/2 ± 8] 的窄窗口里再估一次。如果在低速窗口找到稳定
-#      tempo + onset 密度也匹配低速，那对半。
+# 修复策略：
+#   1. _detect_bpm 只做多算法投票，得到一个粗 BPM
+#   2. 在 analyze() 末尾用 _bpm_sanity_check() 做语义级翻倍兜底，
+#      此时 chord_changes_per_min / danceability / energy 都已算好
+#      可以做更可靠的判断（比单纯 onset 密度强得多）
 
 def _detect_bpm(audio_es, audio_path: str) -> tuple[float, float, list[float]]:
     """返回 (bpm_final, bpm_confidence_0_1, candidates)。"""
@@ -130,7 +130,7 @@ def _detect_bpm(audio_es, audio_path: str) -> tuple[float, float, list[float]]:
     lower = min(bpm_a, bpm_b)
     is_double = lower > 0 and abs(higher - 2 * lower) / lower < 0.08
 
-    # librosa 路径准备好（后续 sanity check 也用得到，避免重复 load）
+    # 拿 RMS 当能量代理给 doubling 分支用
     y_22k = librosa.load(audio_path, sr=22050, mono=True)[0]
     rms = librosa.feature.rms(y=y_22k)[0]
     energy_quick = float(np.mean(rms))
@@ -142,58 +142,51 @@ def _detect_bpm(audio_es, audio_path: str) -> tuple[float, float, list[float]]:
         bpm_final = lower if energy_quick < 0.12 else higher
         bpm_confidence = conf_a_norm * 0.75
 
-    # ---- 事后 sanity check：抒情曲翻倍兜底 -----------------------------
-    #
-    # 思路：如果 bpm_final > 100，跑两个独立估计：
-    #   (a) librosa 在 [half ± 12] 窄窗口（low-tempo prior）
-    #   (b) librosa 在 [half ± 12] 用 onset autocorr 自己估
-    # 任一确认了 half_bpm 且 onset 密度也吻合慢速 → 对半
-    if bpm_final > 100:
-        half_bpm = bpm_final / 2.0
-        try:
-            # librosa.feature.tempo 用 start_bpm 偏置到 half 附近
-            tempos_low = librosa.feature.tempo(
-                y=y_22k, sr=22050, start_bpm=half_bpm, std_bpm=12,
-            )
-            tempo_low = float(tempos_low[0]) if len(tempos_low) else 0.0
-        except Exception:
-            tempo_low = 0.0
-
-        try:
-            onset_env = librosa.onset.onset_strength(y=y_22k, sr=22050)
-            onsets = librosa.onset.onset_detect(
-                onset_envelope=onset_env, sr=22050, units="time"
-            )
-            duration = len(y_22k) / 22050.0
-            onset_per_sec = (len(onsets) / duration) if duration > 0 else 0.0
-        except Exception:
-            onset_per_sec = 0.0
-
-        # half_bpm 隐含的"每秒 beat 数"
-        beats_per_sec_half = half_bpm / 60.0
-        beats_per_sec_full = bpm_final / 60.0
-
-        # match_onset 是物理必要条件：如果 onset 密度更接近高 BPM，
-        # 那这首歌的击感本来就密集，对半就是物理错误（drum&bass 案例）。
-        # 用 1.25 倍系数：明显倾向 half 才算 match。
-        match_onset = (
-            onset_per_sec > 0
-            and abs(onset_per_sec - beats_per_sec_half) * 1.25
-                < abs(onset_per_sec - beats_per_sec_full)
-        )
-
-        # match_lib 和 match_energy 是辅助条件
-        match_lib = abs(tempo_low - half_bpm) < 8
-        match_energy = energy_quick < 0.18
-
-        # 必须 onset 支持，再加任一辅助条件
-        if match_onset and (match_lib or match_energy):
-            bpm_final = half_bpm
-            bpm_confidence = max(bpm_confidence * 0.9, 0.45)
-            if round(half_bpm, 2) not in candidates:
-                candidates.append(round(half_bpm, 2))
-
     return bpm_final, bpm_confidence, candidates
+
+
+def _bpm_sanity_check(
+    bpm: float,
+    confidence: float,
+    *,
+    energy: float,
+    danceability: float | None,
+    chord_changes_per_min: float | None,
+    onset_rate: float | None,
+) -> tuple[float, float, bool]:
+    """
+    抒情曲翻倍兜底。返回 (new_bpm, new_confidence, halved)。
+
+    思路：用语义级特征（和声变化频率、舞动性、能量）共同判断"这首
+    其实是慢歌"。BPM > 100 是必要条件；高 danceability 是否决条件
+    （d&b、disco 等真实高速歌的 danceability 通常 > 1.8）。
+    """
+    if bpm <= 100:
+        return bpm, confidence, False
+
+    # 高舞动 = 真实高 BPM。直接否决对半（drum&bass / disco 安全）
+    if danceability is not None and danceability > 1.8:
+        return bpm, confidence, False
+
+    # 投票：每个独立信号都暗示"这是慢歌"
+    slow_signals = 0
+    if energy < 0.4:
+        slow_signals += 1
+    if chord_changes_per_min is not None and chord_changes_per_min < 70:
+        slow_signals += 1
+    if danceability is not None and danceability < 1.2:
+        slow_signals += 1
+    # onset 太稀疏（每拍不到 1 个 onset）也算一票
+    if onset_rate is not None and onset_rate < bpm / 60.0 * 0.7:
+        slow_signals += 1
+
+    # 至少 3 个独立信号都说慢，才对半。
+    # 阈值 3 的依据：听海实测 energy/chord/danceability 三个都中招（3 票），
+    # 而典型古典慢板只 energy + danceability 中招（2 票），不会被误对半。
+    if slow_signals >= 3:
+        return bpm / 2.0, max(confidence * 0.85, 0.5), True
+
+    return bpm, confidence, False
 
 
 # ---- Tier 2 —— Essentia 纯算法扩展 ----------------------------------------
@@ -545,6 +538,20 @@ def analyze(audio_path: str) -> dict[str, Any]:
             mood_tags = runner.mood_tags()
             genre_tags = runner.genre_tags()
             instrument_tags = runner.instrument_tags()
+
+    # ---- BPM 翻倍兜底 ------------------------------------------------------
+    # 用语义级特征（chord/danceability/energy/onset）共同投票判断
+    # 这里 bpm 已经经过多算法投票，但抒情曲常常被两个算法同时翻倍
+    bpm_final, bpm_confidence, halved = _bpm_sanity_check(
+        bpm_final,
+        bpm_confidence,
+        energy=energy,
+        danceability=danceability,
+        chord_changes_per_min=chord_changes_per_min,
+        onset_rate=onset_rate,
+    )
+    if halved and round(bpm_final, 2) not in bpm_candidates:
+        bpm_candidates.append(round(bpm_final, 2))
 
     return {
         # Tier 0
