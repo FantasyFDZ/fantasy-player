@@ -76,24 +76,36 @@ export function MusicAnalysis({ song }: Props) {
 
   return (
     <div className="flex h-full flex-col gap-3">
-      {/* 顶部大数字 —— BPM + Key */}
+      {/* 顶部大数字 —— BPM + Key，带置信度徽章 */}
       <div className="flex items-start justify-between">
         <BigStat
           label="BPM"
           value={features.bpm.toFixed(1)}
           hint={describeTempo(features.bpm)}
+          confidence={features.bpm_confidence}
+          tooltip="每分钟节拍数 (Beats Per Minute)。由 Essentia RhythmExtractor2013 分析整首歌得到。置信度低于 0.3 时结果不可靠，常见于慢板抒情曲（主旋律长音掩盖鼓点）。"
         />
         <BigStat
           label="Key"
           value={features.key}
           hint={describeKey(features.key)}
+          confidence={features.key_confidence}
+          tooltip="调式。由 Essentia KeyExtractor 通过 HPCP + Krumhansl 谱推断。大调写作 'C'，小调写作 'Cm'。置信度 0-1，>0.7 基本可信。"
         />
       </div>
 
       {/* 能量 / 情绪 环形 */}
       <div className="flex items-center justify-between gap-3">
-        <RadialGauge label="能量" value={features.energy} />
-        <RadialGauge label="情绪" value={features.valence} />
+        <RadialGauge
+          label="能量"
+          value={features.energy}
+          tooltip="音频整体响度（RMS 能量均值归一化），0 极安静、1 极响。对应歌曲的冲击力。"
+        />
+        <RadialGauge
+          label="情绪"
+          value={features.valence}
+          tooltip="情绪代理值，基于频谱质心推断。高值代表明亮正面的听感（通常意味着高音多、节奏跳跃），低值代表低沉深情。这是经验代理，不是真实音乐情感分析。"
+        />
       </div>
 
       {/* 频谱柱状 */}
@@ -140,13 +152,27 @@ function BigStat({
   label,
   value,
   hint,
+  confidence,
+  tooltip,
 }: {
   label: string;
   value: string;
   hint: string;
+  confidence?: number;
+  tooltip?: string;
 }) {
+  const confLevel = confidence === undefined ? "none" : confidenceLevel(confidence);
+  const confColor =
+    confLevel === "high"
+      ? "var(--theme-accent)"
+      : confLevel === "medium"
+        ? "rgba(230,200,120,0.85)"
+        : confLevel === "low"
+          ? "rgba(255,150,130,0.85)"
+          : "transparent";
+
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col" title={tooltip}>
       <span
         className="font-mono"
         style={{
@@ -155,6 +181,7 @@ function BigStat({
           textTransform: "uppercase",
           color: "var(--theme-label)",
           filter: "brightness(1.4)",
+          cursor: tooltip ? "help" : "default",
         }}
       >
         {label}
@@ -171,26 +198,62 @@ function BigStat({
       >
         {value}
       </span>
-      <span
-        style={{
-          fontSize: 10,
-          color: "var(--theme-lyrics-mid)",
-          marginTop: 3,
-        }}
-      >
-        {hint}
-      </span>
+      <div className="mt-1 flex items-center gap-2">
+        <span
+          style={{
+            fontSize: 10,
+            color: "var(--theme-lyrics-mid)",
+          }}
+        >
+          {hint}
+        </span>
+        {confidence !== undefined && (
+          <span
+            title={`置信度 ${(confidence * 100).toFixed(0)}%`}
+            style={{
+              fontSize: 9,
+              padding: "1px 6px",
+              borderRadius: 999,
+              border: `1px solid ${confColor}`,
+              color: confColor,
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            {confLevel === "low"
+              ? "⚠ 低信度"
+              : `${(confidence * 100).toFixed(0)}%`}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
 
-function RadialGauge({ label, value }: { label: string; value: number }) {
+function confidenceLevel(c: number): "high" | "medium" | "low" {
+  if (c >= 0.7) return "high";
+  if (c >= 0.3) return "medium";
+  return "low";
+}
+
+function RadialGauge({
+  label,
+  value,
+  tooltip,
+}: {
+  label: string;
+  value: number;
+  tooltip?: string;
+}) {
   const radius = 26;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference * (1 - Math.min(1, Math.max(0, value)));
 
   return (
-    <div className="flex items-center gap-3">
+    <div
+      className="flex items-center gap-3"
+      title={tooltip}
+      style={{ cursor: tooltip ? "help" : "default" }}
+    >
       <svg width="60" height="60" viewBox="0 0 60 60">
         <circle
           cx="30"
@@ -257,19 +320,27 @@ function SpectrumBars({
       {
         label: "质心",
         value: Math.min(1, features.spectral_centroid / 5000),
+        tooltip: `频谱质心 ${features.spectral_centroid.toFixed(0)} Hz —— 音色的亮度中心，高值意味着更多高频（铙钹、女声、口哨），低值更暗沉（bass、低音男声）。`,
       },
       {
         label: "带宽",
         value: Math.min(1, features.spectral_bandwidth / 4000),
+        tooltip: `频谱带宽 ${features.spectral_bandwidth.toFixed(0)} Hz —— 频率扩散程度。纯音乐器带宽小，嘈杂或爆音带宽大。`,
       },
-      { label: "平坦", value: Math.min(1, features.spectral_flatness * 10) },
+      {
+        label: "平坦",
+        value: Math.min(1, features.spectral_flatness * 10),
+        tooltip: `频谱平坦度 ${features.spectral_flatness.toFixed(4)} —— 越接近 1 越像白噪声（hi-hat、底噪），越接近 0 越像纯音（人声、弦乐）。`,
+      },
       {
         label: "滚降",
         value: Math.min(1, features.spectral_rolloff / 10000),
+        tooltip: `频谱滚降 ${features.spectral_rolloff.toFixed(0)} Hz —— 85% 能量集中的上限频率。用于区分柔和和尖锐的音色。`,
       },
       {
         label: "过零率",
         value: Math.min(1, features.zero_crossing_rate * 5),
+        tooltip: `过零率 ${features.zero_crossing_rate.toFixed(4)} —— 波形穿过零点的频率。打击乐、噪声成分高则过零率高。`,
       },
     ],
     [features],
@@ -293,6 +364,8 @@ function SpectrumBars({
           <div
             key={b.label}
             className="flex flex-1 flex-col items-center gap-1"
+            title={b.tooltip}
+            style={{ cursor: "help" }}
           >
             <div
               style={{
