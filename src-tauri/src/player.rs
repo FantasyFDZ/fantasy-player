@@ -109,8 +109,14 @@ pub struct PlaybackEvent {
 
 // ---- PlayerState -----------------------------------------------------------
 
-/// Managed Tauri state for the MPV player.
+/// Managed Tauri state for the MPV player. Clone-able (Arc inside) so
+/// it can move into spawn_blocking closures.
+#[derive(Clone)]
 pub struct PlayerState {
+    inner: Arc<PlayerStateInner>,
+}
+
+struct PlayerStateInner {
     initialized: AtomicBool,
     last_status: Arc<Mutex<PlaybackStatus>>,
     /// 去抖 track-ended 事件（eof-reached 在同一首歌播完后会连续多帧为 true）。
@@ -121,38 +127,40 @@ pub struct PlayerState {
 impl PlayerState {
     pub fn new() -> Self {
         PlayerState {
-            initialized: AtomicBool::new(false),
-            last_status: Arc::new(Mutex::new(PlaybackStatus::default())),
-            finished_emitted: Arc::new(AtomicBool::new(false)),
-            watcher_started: AtomicBool::new(false),
+            inner: Arc::new(PlayerStateInner {
+                initialized: AtomicBool::new(false),
+                last_status: Arc::new(Mutex::new(PlaybackStatus::default())),
+                finished_emitted: Arc::new(AtomicBool::new(false)),
+                watcher_started: AtomicBool::new(false),
+            }),
         }
     }
 
     pub fn status(&self) -> PlaybackStatus {
-        self.last_status.lock().unwrap().clone()
+        self.inner.last_status.lock().unwrap().clone()
     }
 
     /// 幂等启动 mpv。首次调用时 spawn 子进程 + 启动后台 watcher。
     pub fn ensure_running(&self, app: AppHandle) -> Result<(), PlayerError> {
-        if self.initialized.load(Ordering::Acquire) && mpv_ready() {
+        if self.inner.initialized.load(Ordering::Acquire) && mpv_ready() {
             return Ok(());
         }
         start_mpv_process()?;
-        self.initialized.store(true, Ordering::Release);
+        self.inner.initialized.store(true, Ordering::Release);
 
         // 启动后台 watcher（仅一次）——共享同一份 last_status / finished_emitted。
-        if !self.watcher_started.swap(true, Ordering::AcqRel) {
+        if !self.inner.watcher_started.swap(true, Ordering::AcqRel) {
             spawn_watcher(
                 app,
-                Arc::clone(&self.last_status),
-                Arc::clone(&self.finished_emitted),
+                Arc::clone(&self.inner.last_status),
+                Arc::clone(&self.inner.finished_emitted),
             );
         }
         Ok(())
     }
 
     pub fn load_url(&self, url: &str) -> Result<(), PlayerError> {
-        self.finished_emitted.store(false, Ordering::Release);
+        self.inner.finished_emitted.store(false, Ordering::Release);
         send_command(json!({ "command": ["loadfile", url, "replace"] }))?;
         send_command(json!({ "command": ["set_property", "pause", false] }))?;
         Ok(())

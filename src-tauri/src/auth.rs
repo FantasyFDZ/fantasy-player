@@ -10,7 +10,7 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -81,9 +81,9 @@ pub enum QrCheckOutcome {
 
 // ---- state -----------------------------------------------------------------
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct AuthState {
-    inner: Mutex<Session>,
+    inner: Arc<Mutex<Session>>,
 }
 
 impl AuthState {
@@ -91,7 +91,7 @@ impl AuthState {
     pub fn load() -> Self {
         let session = load_session().unwrap_or_default();
         AuthState {
-            inner: Mutex::new(session),
+            inner: Arc::new(Mutex::new(session)),
         }
     }
 

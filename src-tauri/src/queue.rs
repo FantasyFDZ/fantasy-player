@@ -9,7 +9,7 @@
 //!
 //! 这样 queue 保持纯数据，player 保持纯播放，二者解耦。
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
@@ -37,9 +37,9 @@ pub struct QueueSnapshot {
     pub mode: PlayMode,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct QueueState {
-    inner: Mutex<QueueSnapshot>,
+    inner: Arc<Mutex<QueueSnapshot>>,
 }
 
 impl QueueState {

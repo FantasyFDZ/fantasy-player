@@ -1,0 +1,290 @@
+//! Tauri commands——前端唯一的后端入口。
+//!
+//! 约定：
+//! - 所有错误通过 `Result<T, String>` 返回，前端直接显示
+//! - 阻塞操作（spawn node）用 `tauri::async_runtime::spawn_blocking` 包裹
+//! - State: AuthState / PlayerState / QueueState / Db
+
+use tauri::{AppHandle, State};
+
+use crate::auth::{AuthState, QrCheckOutcome, QrStartReceipt, Session};
+use crate::db::Db;
+use crate::netease_api::{self, PlaylistDetail, Song, Playlist, Lyric};
+use crate::player::{PlaybackStatus, PlayerState};
+use crate::queue::{PlayMode, QueueSnapshot, QueueState};
+
+// ---- auth ------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn auth_session(auth: State<'_, AuthState>) -> Result<Session, String> {
+    Ok(auth.snapshot())
+}
+
+#[tauri::command]
+pub async fn auth_qr_start(auth: State<'_, AuthState>) -> Result<QrStartReceipt, String> {
+    // inner uses blocking node spawn
+    let auth = auth.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || auth.start_qr())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn auth_qr_check(auth: State<'_, AuthState>) -> Result<QrCheckOutcome, String> {
+    let auth = auth.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || auth.check_qr())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn auth_refresh(auth: State<'_, AuthState>) -> Result<Option<crate::auth::UserProfile>, String> {
+    let auth = auth.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || auth.refresh())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn auth_logout(auth: State<'_, AuthState>) -> Result<(), String> {
+    let auth = auth.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || auth.logout())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+// ---- netease catalog -------------------------------------------------------
+
+#[tauri::command]
+pub async fn search_songs(
+    auth: State<'_, AuthState>,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<Song>, String> {
+    let cookie = auth.cookie();
+    let limit = limit.unwrap_or(30);
+    tauri::async_runtime::spawn_blocking(move || netease_api::search_songs(&query, limit, &cookie))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_lyric(auth: State<'_, AuthState>, id: String) -> Result<Lyric, String> {
+    let cookie = auth.cookie();
+    tauri::async_runtime::spawn_blocking(move || netease_api::lyric(&id, &cookie))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_user_playlists(
+    auth: State<'_, AuthState>,
+    limit: Option<u32>,
+) -> Result<Vec<Playlist>, String> {
+    let user = auth
+        .current_user()
+        .ok_or_else(|| "未登录网易云账号".to_string())?;
+    let cookie = auth.cookie();
+    let limit = limit.unwrap_or(100);
+    tauri::async_runtime::spawn_blocking(move || {
+        netease_api::user_playlists(&user.user_id, &cookie, limit)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_playlist_detail(
+    auth: State<'_, AuthState>,
+    id: String,
+    limit: Option<u32>,
+) -> Result<PlaylistDetail, String> {
+    let cookie = auth.cookie();
+    let limit = limit.unwrap_or(500);
+    tauri::async_runtime::spawn_blocking(move || netease_api::playlist_detail(&id, &cookie, limit))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+// ---- playback --------------------------------------------------------------
+
+#[tauri::command]
+pub async fn play_song(
+    app: AppHandle,
+    auth: State<'_, AuthState>,
+    player: State<'_, PlayerState>,
+    queue: State<'_, QueueState>,
+    song: Song,
+) -> Result<PlaybackStatus, String> {
+    player.ensure_running(app).map_err(|e| e.to_string())?;
+    let cookie = auth.cookie();
+    let id = song.id.clone();
+
+    // 替换队列为单曲
+    queue.replace(vec![song.clone()], 0);
+
+    let url = tauri::async_runtime::spawn_blocking(move || {
+        netease_api::song_url(&id, "standard", &cookie)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    if url.url.is_empty() {
+        return Err("未能获取歌曲播放链接（可能需要登录或 VIP）".into());
+    }
+    player.load_url(&url.url).map_err(|e| e.to_string())?;
+    Ok(player.status())
+}
+
+#[tauri::command]
+pub async fn pause(player: State<'_, PlayerState>) -> Result<(), String> {
+    player.pause().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn resume(player: State<'_, PlayerState>) -> Result<(), String> {
+    player.resume().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn seek(player: State<'_, PlayerState>, position: f64) -> Result<(), String> {
+    player.seek(position).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_volume(player: State<'_, PlayerState>, volume: f64) -> Result<(), String> {
+    player.set_volume(volume).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn stop(player: State<'_, PlayerState>) -> Result<(), String> {
+    player.stop().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn playback_status(player: State<'_, PlayerState>) -> Result<PlaybackStatus, String> {
+    Ok(player.status())
+}
+
+// ---- queue -----------------------------------------------------------------
+
+#[tauri::command]
+pub async fn queue_snapshot(queue: State<'_, QueueState>) -> Result<QueueSnapshot, String> {
+    Ok(queue.snapshot())
+}
+
+#[tauri::command]
+pub async fn queue_set_mode(queue: State<'_, QueueState>, mode: PlayMode) -> Result<(), String> {
+    queue.set_mode(mode);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn queue_append(queue: State<'_, QueueState>, song: Song) -> Result<(), String> {
+    queue.append(song);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn queue_play_next(queue: State<'_, QueueState>, song: Song) -> Result<(), String> {
+    queue.play_next(song);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn queue_remove(queue: State<'_, QueueState>, index: usize) -> Result<bool, String> {
+    Ok(queue.remove(index))
+}
+
+#[tauri::command]
+pub async fn queue_clear(queue: State<'_, QueueState>) -> Result<(), String> {
+    queue.clear();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn queue_replace(
+    app: AppHandle,
+    auth: State<'_, AuthState>,
+    player: State<'_, PlayerState>,
+    queue: State<'_, QueueState>,
+    tracks: Vec<Song>,
+    start_index: Option<usize>,
+) -> Result<(), String> {
+    let start = queue
+        .replace(tracks, start_index.unwrap_or(0))
+        .ok_or_else(|| "空队列".to_string())?;
+    play_current(app, auth, player, start).await
+}
+
+#[tauri::command]
+pub async fn next_track(
+    app: AppHandle,
+    auth: State<'_, AuthState>,
+    player: State<'_, PlayerState>,
+    queue: State<'_, QueueState>,
+    auto_advance: Option<bool>,
+) -> Result<Option<Song>, String> {
+    let Some(song) = queue.next(auto_advance.unwrap_or(false)) else {
+        return Ok(None);
+    };
+    play_current(app, auth, player, song.clone()).await?;
+    Ok(Some(song))
+}
+
+#[tauri::command]
+pub async fn prev_track(
+    app: AppHandle,
+    auth: State<'_, AuthState>,
+    player: State<'_, PlayerState>,
+    queue: State<'_, QueueState>,
+) -> Result<Option<Song>, String> {
+    let Some(song) = queue.prev() else {
+        return Ok(None);
+    };
+    play_current(app, auth, player, song.clone()).await?;
+    Ok(Some(song))
+}
+
+// 内部工具：拿到一首歌 → 取 URL → load。命令层复用。
+async fn play_current(
+    app: AppHandle,
+    auth: State<'_, AuthState>,
+    player: State<'_, PlayerState>,
+    song: Song,
+) -> Result<(), String> {
+    player.ensure_running(app).map_err(|e| e.to_string())?;
+    let cookie = auth.cookie();
+    let id = song.id.clone();
+    let url = tauri::async_runtime::spawn_blocking(move || {
+        netease_api::song_url(&id, "standard", &cookie)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if url.url.is_empty() {
+        return Err("未能获取歌曲播放链接（可能需要登录或 VIP）".into());
+    }
+    player.load_url(&url.url).map_err(|e| e.to_string())
+}
+
+// ---- settings --------------------------------------------------------------
+
+#[tauri::command]
+pub async fn get_setting(db: State<'_, Db>, key: String) -> Result<Option<String>, String> {
+    db.get_setting(&key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_setting(db: State<'_, Db>, key: String, value: String) -> Result<(), String> {
+    db.upsert_setting(&key, &value).map_err(|e| e.to_string())
+}
