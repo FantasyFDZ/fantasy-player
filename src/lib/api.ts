@@ -78,6 +78,58 @@ export interface QueueSnapshot {
   mode: PlayMode;
 }
 
+// ---- LLM -----------------------------------------------------------------
+
+export type LlmProtocol = "openai" | "anthropic";
+
+export interface LlmProvider {
+  id: string;
+  name: string;
+  api_key: string;
+  base_url: string;
+  protocol: LlmProtocol;
+  models: string[];
+}
+
+export interface LlmMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface LlmRequestParams {
+  provider_id: string;
+  model: string;
+  messages: LlmMessage[];
+  temperature?: number;
+  max_tokens?: number;
+}
+
+export interface LlmUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface LlmResponse {
+  content: string;
+  model: string;
+  usage: LlmUsage | null;
+}
+
+// ---- Audio features -------------------------------------------------------
+
+export interface AudioFeatures {
+  bpm: number;
+  energy: number;
+  valence: number;
+  key: string;
+  spectral_centroid: number;
+  spectral_bandwidth: number;
+  spectral_flatness: number;
+  spectral_rolloff: number;
+  zero_crossing_rate: number;
+}
+
 // ---- auth ---------------------------------------------------------------
 
 export const api = {
@@ -170,7 +222,36 @@ export const api = {
   async setSetting(key: string, value: string) {
     return invoke<void>("set_setting", { key, value });
   },
+
+  // ---- LLM ----
+  async llmProvidersList() {
+    return invoke<LlmProvider[]>("llm_providers_list");
+  },
+  async llmProviderUpsert(provider: LlmProvider) {
+    return invoke<void>("llm_provider_upsert", { provider });
+  },
+  async llmProviderDelete(id: string) {
+    return invoke<void>("llm_provider_delete", { id });
+  },
+  async llmRequest(req: LlmRequestParams) {
+    return invoke<LlmResponse>("llm_request", { req });
+  },
+  async llmStream(requestId: string, req: LlmRequestParams) {
+    return invoke<LlmResponse>("llm_stream", { requestId, req });
+  },
+
+  // ---- Audio analysis ----
+  async analyzeSong(song: Song) {
+    return invoke<AudioFeatures>("analyze_song", { song });
+  },
 };
+
+export interface LlmStreamChunk {
+  request_id: string;
+  delta: string;
+  done: boolean;
+  usage?: LlmUsage | null;
+}
 
 // ---- events ----
 
@@ -184,4 +265,13 @@ export function onPlaybackUpdate(
 
 export function onTrackEnded(handler: () => void): Promise<UnlistenFn> {
   return listen("melody://track-ended", () => handler());
+}
+
+export function onLlmChunk(
+  requestId: string,
+  handler: (chunk: LlmStreamChunk) => void,
+): Promise<UnlistenFn> {
+  return listen<LlmStreamChunk>(`melody://llm-chunk/${requestId}`, (event) =>
+    handler(event.payload),
+  );
 }
