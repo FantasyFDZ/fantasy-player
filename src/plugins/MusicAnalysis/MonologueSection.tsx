@@ -20,11 +20,14 @@ export function MonologueSection({ song }: Props) {
   const { features, loading: featuresLoading, error: featuresError } =
     useAudioFeatures(song);
   const { provider, model, loading: providerLoading } = useActiveProvider();
-  const { content, loading: llmLoading, error: llmError, request, reset } =
+  const { content, loading: llmLoading, error: llmError, stream, reset } =
     useLLM();
 
   const [lyric, setLyric] = useState<string>("");
   const [lyricReady, setLyricReady] = useState(false);
+  // 是否已经针对当前歌曲发起过 LLM 请求 —— 用于区分
+  // "还没开始" vs "已完成但模型返回空 content" 两种 UI 状态
+  const [hasRequested, setHasRequested] = useState(false);
 
   // 获取歌词 —— lyricReady 门禁保证 LLM 只在歌词请求结束后触发一次
   useEffect(() => {
@@ -56,6 +59,12 @@ export function MonologueSection({ song }: Props) {
   // 幂等去重：同一 (song, provider, model) 组合只发一次
   const lastKeyRef = useRef<string>("");
 
+  // 切歌时显式清空 dedup key —— 防止 HMR / fast refresh 把 ref 跨歌带飞
+  useEffect(() => {
+    lastKeyRef.current = "";
+    setHasRequested(false);
+  }, [song?.id]);
+
   useEffect(() => {
     if (providerLoading) return;
     if (!features || !song || !provider || !model) return;
@@ -63,8 +72,24 @@ export function MonologueSection({ song }: Props) {
     const key = `${song.id}::${provider.id}::${model}`;
     if (lastKeyRef.current === key) return;
     lastKeyRef.current = key;
+
+    // buildPrompt 可能因 features 中某个意外字段抛错；try/catch 兜住。
+    // 注意：失败时不要清 lastKeyRef —— 否则若 features 是问题源头，
+    // useEffect 一旦被任何 dep 重新触发就会无限失败 + 无限重试。
+    // 切歌的 reset effect 会在新 song 时清掉 key，那才是合理的重试时机。
+    let userPrompt: string;
+    try {
+      userPrompt = buildPrompt(song, features, lyric);
+    } catch (err) {
+      console.error("[MonologueSection] buildPrompt failed:", err);
+      return;
+    }
+
     reset();
-    request({
+    setHasRequested(true);
+    // 用 stream 而不是 request：token 会逐字流入 UI，
+    // 让用户立刻看到"在生成"，避免本地慢模型让人误以为卡住。
+    stream({
       provider_id: provider.id,
       model,
       messages: [
@@ -83,16 +108,23 @@ export function MonologueSection({ song }: Props) {
             "- 全文像散文式独白，段落连贯，不要分小节标题\n" +
             "- 有诗意，可以用意象、比喻、画面感\n" +
             "- 不要报数字、不要复述我给的参数、不要用 BPM 或 Hz 等专业术语\n" +
+            "- 不要写出具体的和弦记号（比如 Cm/Db/Ab/Eb），" +
+            "也不要复述我给的任何技术字段名\n" +
             "- 不要用引号、星号、列表符号等装饰",
         },
         {
           role: "user",
-          content: buildPrompt(song, features, lyric),
+          content: userPrompt,
         },
       ],
       temperature: 0.85,
       max_tokens: 1024,
-    }).catch(() => {});
+    }).catch((err) => {
+      console.error("[MonologueSection] llm stream failed:", err);
+      // 注意：失败时不要清 lastKeyRef —— 否则若失败原因是持续性的
+      // （比如本地模型崩了），useEffect 重跑时会无限重试，
+      // 用户的本地模型就会被反复轰炸。
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     features?.bpm,
@@ -116,6 +148,7 @@ export function MonologueSection({ song }: Props) {
           llmLoading={llmLoading}
           llmError={llmError}
           content={content}
+          hasRequested={hasRequested}
         />
       </div>
       {features && <MetricsStrip features={features} />}
@@ -305,6 +338,7 @@ interface DisplayProps {
   llmLoading: boolean;
   llmError: string | null;
   content: string;
+  hasRequested: boolean;
 }
 
 function AiTextDisplay(props: DisplayProps) {
@@ -318,6 +352,7 @@ function AiTextDisplay(props: DisplayProps) {
     llmLoading,
     llmError,
     content,
+    hasRequested,
   } = props;
 
   let body: React.ReactNode;
@@ -351,7 +386,18 @@ function AiTextDisplay(props: DisplayProps) {
     body = `生成失败：${llmError}`;
     bodyStyle.color = "rgba(255,180,160,0.9)";
   } else if (content) {
-    body = content.replace(/<think>[\s\S]*?<\/think>\s*/g, "").trim();
+    const cleaned = content.replace(/<think>[\s\S]*?<\/think>\s*/g, "").trim();
+    if (cleaned.length > 0) {
+      body = cleaned;
+    } else {
+      body = "模型只输出了思考过程，正文为空 —— 换个模型再试";
+      bodyStyle.color = "rgba(255,180,160,0.9)";
+    }
+  } else if (hasRequested && !llmLoading) {
+    // 已经发起过请求，loading 已经回到 false，但 content 仍是空
+    // —— 模型返回了空内容（接口可能 200 但 body 没东西）
+    body = "模型返回了空内容 —— 换个模型再试";
+    bodyStyle.color = "rgba(255,180,160,0.9)";
   } else {
     body = "等待生成…";
     bodyStyle.color = "var(--theme-lyrics-mid)";

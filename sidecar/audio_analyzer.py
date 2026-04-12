@@ -102,6 +102,15 @@ def _label_warmth(mfcc2_mean: float) -> str:
 
 
 # ---- BPM 多算法融合 ---------------------------------------------------------
+#
+# 抒情歌的常见错误模式：multifeature 和 Percival 都把 70 BPM 听成 140，
+# 两者一致 → rel_diff < 5% 分支接管 → 错误地"确认"翻倍。
+#
+# 修复策略（按顺序生效）：
+#   1. 先按多算法投票得到 bpm_final
+#   2. 事后 sanity check：如果 bpm_final > 100，让 librosa 在
+#      [bpm_final/2 ± 8] 的窄窗口里再估一次。如果在低速窗口找到稳定
+#      tempo + onset 密度也匹配低速，那对半。
 
 def _detect_bpm(audio_es, audio_path: str) -> tuple[float, float, list[float]]:
     """返回 (bpm_final, bpm_confidence_0_1, candidates)。"""
@@ -121,16 +130,68 @@ def _detect_bpm(audio_es, audio_path: str) -> tuple[float, float, list[float]]:
     lower = min(bpm_a, bpm_b)
     is_double = lower > 0 and abs(higher - 2 * lower) / lower < 0.08
 
+    # librosa 路径准备好（后续 sanity check 也用得到，避免重复 load）
+    y_22k = librosa.load(audio_path, sr=22050, mono=True)[0]
+    rms = librosa.feature.rms(y=y_22k)[0]
+    energy_quick = float(np.mean(rms))
+
     if rel_diff < 0.05:
         bpm_final = (bpm_a + bpm_b) / 2
         bpm_confidence = min(1.0, conf_a_norm + 0.2)
     elif is_double:
-        rms_quick = librosa.feature.rms(
-            y=librosa.load(audio_path, sr=22050, mono=True)[0]
-        )[0]
-        energy_quick = float(np.mean(rms_quick))
         bpm_final = lower if energy_quick < 0.12 else higher
         bpm_confidence = conf_a_norm * 0.75
+
+    # ---- 事后 sanity check：抒情曲翻倍兜底 -----------------------------
+    #
+    # 思路：如果 bpm_final > 100，跑两个独立估计：
+    #   (a) librosa 在 [half ± 12] 窄窗口（low-tempo prior）
+    #   (b) librosa 在 [half ± 12] 用 onset autocorr 自己估
+    # 任一确认了 half_bpm 且 onset 密度也吻合慢速 → 对半
+    if bpm_final > 100:
+        half_bpm = bpm_final / 2.0
+        try:
+            # librosa.feature.tempo 用 start_bpm 偏置到 half 附近
+            tempos_low = librosa.feature.tempo(
+                y=y_22k, sr=22050, start_bpm=half_bpm, std_bpm=12,
+            )
+            tempo_low = float(tempos_low[0]) if len(tempos_low) else 0.0
+        except Exception:
+            tempo_low = 0.0
+
+        try:
+            onset_env = librosa.onset.onset_strength(y=y_22k, sr=22050)
+            onsets = librosa.onset.onset_detect(
+                onset_envelope=onset_env, sr=22050, units="time"
+            )
+            duration = len(y_22k) / 22050.0
+            onset_per_sec = (len(onsets) / duration) if duration > 0 else 0.0
+        except Exception:
+            onset_per_sec = 0.0
+
+        # half_bpm 隐含的"每秒 beat 数"
+        beats_per_sec_half = half_bpm / 60.0
+        beats_per_sec_full = bpm_final / 60.0
+
+        # match_onset 是物理必要条件：如果 onset 密度更接近高 BPM，
+        # 那这首歌的击感本来就密集，对半就是物理错误（drum&bass 案例）。
+        # 用 1.25 倍系数：明显倾向 half 才算 match。
+        match_onset = (
+            onset_per_sec > 0
+            and abs(onset_per_sec - beats_per_sec_half) * 1.25
+                < abs(onset_per_sec - beats_per_sec_full)
+        )
+
+        # match_lib 和 match_energy 是辅助条件
+        match_lib = abs(tempo_low - half_bpm) < 8
+        match_energy = energy_quick < 0.18
+
+        # 必须 onset 支持，再加任一辅助条件
+        if match_onset and (match_lib or match_energy):
+            bpm_final = half_bpm
+            bpm_confidence = max(bpm_confidence * 0.9, 0.45)
+            if round(half_bpm, 2) not in candidates:
+                candidates.append(round(half_bpm, 2))
 
     return bpm_final, bpm_confidence, candidates
 

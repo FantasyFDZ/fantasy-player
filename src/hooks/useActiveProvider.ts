@@ -37,6 +37,29 @@ export function useActiveProvider(): ActiveProviderState {
           return;
         }
       }
+      // 偏好的默认组合（按顺序找第一个可用的）。
+      // 这个清单基于 4 首歌 × 7 模型的对比测试结论：
+      // kimi-k2.5 文笔最具体且 4 秒内出，mimo/v2-omni 视觉化最强。
+      // 注意：这不写 settings，只是 fallback 偏好。
+      const PREFERRED: Array<{ providerId: string; model: string }> = [
+        { providerId: "dashscope", model: "kimi-k2.5" },
+        { providerId: "mimo", model: "mimo-v2-omni" },
+        { providerId: "dashscope", model: "qwen3.5-plus" },
+      ];
+      for (const pref of PREFERRED) {
+        const p = providers.find(
+          (x) =>
+            x.id === pref.providerId &&
+            x.api_key.trim() !== "" &&
+            x.models.includes(pref.model),
+        );
+        if (p) {
+          setProvider(p);
+          setModel(pref.model);
+          return;
+        }
+      }
+      // 通用 fallback：任何有 api_key 的第一个 provider 的第一个 model
       const firstWithKey = providers.find(
         (p) => p.api_key.trim() !== "" && p.models.length > 0,
       );
