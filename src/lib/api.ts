@@ -162,6 +162,14 @@ export const api = {
   async prevTrack() {
     return invoke<Song | null>("prev_track");
   },
+
+  // ---- settings ----
+  async getSetting(key: string) {
+    return invoke<string | null>("get_setting", { key });
+  },
+  async setSetting(key: string, value: string) {
+    return invoke<void>("set_setting", { key, value });
+  },
 };
 
 // ---- events ----
