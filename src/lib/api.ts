@@ -244,7 +244,27 @@ export const api = {
   async analyzeSong(song: Song) {
     return invoke<AudioFeatures>("analyze_song", { song });
   },
+
+  // ---- Panel layout ----
+  async panelLayoutList() {
+    return invoke<PanelLayoutRow[]>("panel_layout_list");
+  },
+  async panelLayoutUpsert(row: PanelLayoutRow) {
+    return invoke<void>("panel_layout_upsert", { row });
+  },
+  async panelLayoutDelete(panelId: string) {
+    return invoke<void>("panel_layout_delete", { panelId });
+  },
 };
+
+export interface PanelLayoutRow {
+  panel_id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  visible: boolean;
+}
 
 export interface LlmStreamChunk {
   request_id: string;

@@ -15,10 +15,14 @@ import { Gramophone } from "@/core/Gramophone/Gramophone";
 import { Lyrics } from "@/core/Lyrics/Lyrics";
 import { ThemeProvider } from "@/core/ThemeProvider/ThemeProvider";
 import { LightLayer } from "@/core/ThemeProvider/LightLayer";
+import { PanelProvider } from "@/core/PanelManager/PanelProvider";
+import { PanelHost } from "@/core/PanelManager/PanelHost";
 import { PlayBar } from "@/components/PlayBar";
 import { SearchPanel } from "@/components/SearchPanel";
 import { LoginPanel } from "@/components/LoginPanel";
 import { BrandMenu } from "@/components/BrandMenu";
+import { SettingsPanel } from "@/components/SettingsPanel";
+import { PANEL_PLUGINS } from "@/plugins";
 import {
   api,
   onPlaybackUpdate,
@@ -26,12 +30,14 @@ import {
   type UserProfile,
 } from "@/lib/api";
 
-type Overlay = "none" | "search" | "account";
+type Overlay = "none" | "search" | "account" | "settings";
 
 export default function App() {
   return (
     <ThemeProvider>
-      <Shell />
+      <PanelProvider plugins={PANEL_PLUGINS}>
+        <Shell />
+      </PanelProvider>
     </ThemeProvider>
   );
 }
@@ -95,6 +101,13 @@ function Shell() {
             label="搜索"
           />
           <HeaderButton
+            active={overlay === "settings"}
+            onClick={() =>
+              setOverlay((o) => (o === "settings" ? "none" : "settings"))
+            }
+            label="设置"
+          />
+          <HeaderButton
             active={overlay === "account"}
             onClick={() =>
               setOverlay((o) => (o === "account" ? "none" : "account"))
@@ -155,12 +168,15 @@ function Shell() {
       {/* PlayBar —— root flex 子节点，保证全窗口宽度 */}
       <PlayBar currentSong={currentSong} onSongChange={setCurrentSong} />
 
+      {/* 浮动面板层 —— viewport 级别的浮层，可覆盖任何区域 */}
+      <PanelHost song={currentSong} />
+
       {/* overlay */}
       {overlay !== "none" && (
         <Overlay onClose={() => setOverlay("none")}>
-          {overlay === "search" ? (
-            <SearchPanel onPlay={handlePlay} />
-          ) : (
+          {overlay === "search" && <SearchPanel onPlay={handlePlay} />}
+          {overlay === "settings" && <SettingsPanel />}
+          {overlay === "account" && (
             <LoginPanel
               user={user}
               onLogin={(u) => {

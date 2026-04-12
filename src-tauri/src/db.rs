@@ -190,6 +190,84 @@ impl Db {
         Ok(())
     }
 
+    // ---- panel_layout CRUD -------------------------------------------------
+
+    pub fn panel_layout_get(
+        &self,
+        panel_id: &str,
+    ) -> Result<Option<PanelLayoutRow>, DbError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT panel_id, x, y, width, height, visible
+             FROM panel_layout WHERE panel_id = ?1",
+        )?;
+        let mut rows = stmt.query(params![panel_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(PanelLayoutRow {
+                panel_id: row.get(0)?,
+                x: row.get(1)?,
+                y: row.get(2)?,
+                width: row.get(3)?,
+                height: row.get(4)?,
+                visible: row.get::<_, i64>(5)? != 0,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn panel_layout_list(&self) -> Result<Vec<PanelLayoutRow>, DbError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT panel_id, x, y, width, height, visible FROM panel_layout",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(PanelLayoutRow {
+                    panel_id: row.get(0)?,
+                    x: row.get(1)?,
+                    y: row.get(2)?,
+                    width: row.get(3)?,
+                    height: row.get(4)?,
+                    visible: row.get::<_, i64>(5)? != 0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn panel_layout_upsert(&self, row: &PanelLayoutRow) -> Result<(), DbError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO panel_layout (panel_id, x, y, width, height, visible)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(panel_id) DO UPDATE SET
+               x       = excluded.x,
+               y       = excluded.y,
+               width   = excluded.width,
+               height  = excluded.height,
+               visible = excluded.visible",
+            params![
+                row.panel_id,
+                row.x,
+                row.y,
+                row.width,
+                row.height,
+                i64::from(row.visible),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn panel_layout_delete(&self, panel_id: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM panel_layout WHERE panel_id = ?1",
+            params![panel_id],
+        )?;
+        Ok(())
+    }
+
     /// 首次启动 seed：为空表写入 4 个默认 Provider（api_key 留空）。
     /// 已存在的 Provider 不覆盖，避免抹掉用户配置。
     pub fn seed_providers_if_empty(&self) -> Result<(), DbError> {
@@ -214,6 +292,16 @@ pub struct ProviderRow {
     pub base_url: String,
     pub protocol: String, // "openai" | "anthropic"
     pub models_json: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PanelLayoutRow {
+    pub panel_id: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub visible: bool,
 }
 
 fn default_providers() -> Vec<ProviderRow> {
@@ -282,9 +370,11 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
         CREATE TABLE IF NOT EXISTS song_features (
             song_id                 TEXT PRIMARY KEY REFERENCES songs(id) ON DELETE CASCADE,
             bpm                     REAL,
+            bpm_confidence          REAL DEFAULT 0,
             energy                  REAL,
             valence                 REAL,
             key                     TEXT,
+            key_confidence          REAL DEFAULT 0,
             spectral_centroid       REAL,
             spectral_bandwidth      REAL,
             spectral_flatness       REAL,
@@ -292,6 +382,10 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
             zero_crossing_rate      REAL,
             analyzed_at             INTEGER NOT NULL DEFAULT (strftime('%s','now'))
         );
+
+        -- 兼容升级：已有 song_features 表时补齐 2 列
+        -- SQLite 不支持 IF NOT EXISTS on ALTER，用 try/ignore
+        -- （旧版本创建的表会命中这里）
 
         CREATE TABLE IF NOT EXISTS song_ai_content (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -363,6 +457,19 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
         );
         "#,
     )?;
+
+    // 旧 DB 兼容：song_features 表在早期版本没有 bpm_confidence 和
+    // key_confidence 两列，用 ALTER TABLE 补齐。SQLite 不支持
+    // IF NOT EXISTS on ALTER，于是用 try-ignore。
+    let _ = conn.execute(
+        "ALTER TABLE song_features ADD COLUMN bpm_confidence REAL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE song_features ADD COLUMN key_confidence REAL DEFAULT 0",
+        [],
+    );
+
     Ok(())
 }
 
@@ -462,5 +569,41 @@ mod tests {
         // 非空时不重复 seed
         db.seed_providers_if_empty().unwrap();
         assert_eq!(db.provider_list().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn panel_layout_crud_round_trip() {
+        let db = Db::open_in_memory().expect("open");
+        assert!(db.panel_layout_list().unwrap().is_empty());
+
+        let row = PanelLayoutRow {
+            panel_id: "music_analysis".into(),
+            x: 120.0,
+            y: 80.0,
+            width: 420.0,
+            height: 320.0,
+            visible: true,
+        };
+        db.panel_layout_upsert(&row).unwrap();
+
+        let got = db.panel_layout_get("music_analysis").unwrap().unwrap();
+        assert_eq!(got.width, 420.0);
+        assert!(got.visible);
+
+        // 覆盖
+        let mut updated = row.clone();
+        updated.x = 200.0;
+        updated.visible = false;
+        db.panel_layout_upsert(&updated).unwrap();
+        let got = db.panel_layout_get("music_analysis").unwrap().unwrap();
+        assert_eq!(got.x, 200.0);
+        assert!(!got.visible);
+
+        // list
+        assert_eq!(db.panel_layout_list().unwrap().len(), 1);
+
+        // delete
+        db.panel_layout_delete("music_analysis").unwrap();
+        assert!(db.panel_layout_list().unwrap().is_empty());
     }
 }

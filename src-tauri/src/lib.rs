@@ -72,6 +72,9 @@ pub fn run() {
             commands::llm_request,
             commands::llm_stream,
             commands::analyze_song,
+            commands::panel_layout_list,
+            commands::panel_layout_upsert,
+            commands::panel_layout_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

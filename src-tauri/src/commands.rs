@@ -9,7 +9,7 @@ use tauri::{AppHandle, State};
 
 use crate::audio_analyzer::{self, AudioFeatures};
 use crate::auth::{AuthState, QrCheckOutcome, QrStartReceipt, Session};
-use crate::db::Db;
+use crate::db::{Db, PanelLayoutRow};
 use crate::llm_client::{LlmClient, LlmRequest, LlmResponse, Provider};
 use crate::netease_api::{self, PlaylistDetail, Song, Playlist, Lyric};
 use crate::player::{PlaybackStatus, PlayerState};
@@ -339,6 +339,29 @@ pub async fn llm_stream(
     llm.stream(&db, &app, &request_id, req)
         .await
         .map_err(|e| e.to_string())
+}
+
+// ---- Panel layout ----------------------------------------------------------
+
+#[tauri::command]
+pub async fn panel_layout_list(db: State<'_, Db>) -> Result<Vec<PanelLayoutRow>, String> {
+    db.panel_layout_list().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn panel_layout_upsert(
+    db: State<'_, Db>,
+    row: PanelLayoutRow,
+) -> Result<(), String> {
+    db.panel_layout_upsert(&row).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn panel_layout_delete(
+    db: State<'_, Db>,
+    panel_id: String,
+) -> Result<(), String> {
+    db.panel_layout_delete(&panel_id).map_err(|e| e.to_string())
 }
 
 // ---- Audio analysis --------------------------------------------------------
