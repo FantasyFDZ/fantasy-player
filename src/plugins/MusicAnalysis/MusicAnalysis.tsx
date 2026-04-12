@@ -7,24 +7,22 @@
 import { useState } from "react";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import type { Song } from "@/lib/api";
-import { AnalysisSection } from "./AnalysisSection";
-import { AtmosphereSection } from "./AtmosphereSection";
 import { CommentsSection } from "./CommentsSection";
+import { MonologueSection } from "./MonologueSection";
 
 interface Props {
   song: Song | null;
 }
 
-type Tab = "analysis" | "atmosphere" | "comments";
+type Tab = "monologue" | "comments";
 
 const TABS: Array<{ id: Tab; label: string }> = [
-  { id: "analysis", label: "解析" },
-  { id: "atmosphere", label: "氛围" },
+  { id: "monologue", label: "独白" },
   { id: "comments", label: "网抑云" },
 ];
 
 export function MusicAnalysis({ song }: Props) {
-  const [tab, setTab] = useState<Tab>("analysis");
+  const [tab, setTab] = useState<Tab>("monologue");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
@@ -100,8 +98,7 @@ export function MusicAnalysis({ song }: Props) {
 
       {/* Tab 内容 */}
       <div className="flex-1 overflow-y-auto" style={{ padding: "4px 2px" }}>
-        {tab === "analysis" && <AnalysisSection song={song} />}
-        {tab === "atmosphere" && <AtmosphereSection song={song} />}
+        {tab === "monologue" && <MonologueSection song={song} />}
         {tab === "comments" && <CommentsSection song={song} />}
       </div>
 

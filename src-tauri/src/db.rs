@@ -22,6 +22,8 @@ pub enum DbError {
     Io(#[from] std::io::Error),
     #[error("SQLite 错误: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("{0}")]
+    Other(String),
 }
 
 fn db_path() -> Result<PathBuf, DbError> {
@@ -382,6 +384,7 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
             spectral_flatness       REAL,
             spectral_rolloff        REAL,
             zero_crossing_rate      REAL,
+            extra_json              TEXT,
             analyzed_at             INTEGER NOT NULL DEFAULT (strftime('%s','now'))
         );
 
@@ -469,6 +472,10 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
     );
     let _ = conn.execute(
         "ALTER TABLE song_features ADD COLUMN key_confidence REAL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE song_features ADD COLUMN extra_json TEXT",
         [],
     );
 

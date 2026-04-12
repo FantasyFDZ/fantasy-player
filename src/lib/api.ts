@@ -129,22 +129,50 @@ export interface LlmResponse {
 // ---- Audio features -------------------------------------------------------
 
 export interface AudioFeatures {
+  // ---- Tier 0 ----
   bpm: number;
   /** BPM 置信度 0-1，融合后的最终结果 */
   bpm_confidence: number;
   /** 多算法候选 BPM（[multifeature, percival]），用于前端提示 */
   bpm_candidates: number[];
-  energy: number;
-  valence: number;
   /** 调式，大调 "C"，小调 "Cm" */
   key: string;
   /** 调式置信度 0-1 */
   key_confidence: number;
+
+  // ---- Tier 1 ----
+  energy: number;
+  valence: number;
   spectral_centroid: number;
   spectral_bandwidth: number;
   spectral_flatness: number;
   spectral_rolloff: number;
   zero_crossing_rate: number;
+
+  // ---- Tier 2: Essentia 拓展 ----
+  loudness_lufs?: number | null;
+  dynamic_complexity?: number | null;
+  /** 0-3，越高越舞动 */
+  danceability?: number | null;
+  /** 每秒 onset 数 */
+  onset_rate?: number | null;
+  pitch_mean_hz?: number | null;
+  pitch_std_hz?: number | null;
+  pitch_range_semitones?: number | null;
+  tuning_hz?: number | null;
+  chord_progression?: string[] | null;
+  chord_changes_per_min?: number | null;
+  mfcc_brightness?: number | null;
+  mfcc_warmth?: number | null;
+  timbre_brightness_label?: string | null;
+  timbre_warmth_label?: string | null;
+
+  // ---- Tier 3: TF 预训练（缺模型时全为 null）----
+  voice_instrumental?: string | null;
+  voice_gender?: string | null;
+  mood_tags?: string[] | null;
+  genre_tags?: string[] | null;
+  instrument_tags?: string[] | null;
 }
 
 // ---- auth ---------------------------------------------------------------

@@ -23,7 +23,7 @@ export function CommentsSection({ song }: Props) {
     setLoading(true);
     setError(null);
     api
-      .getSongComments(song.id, 8)
+      .getSongComments(song.id, 20)
       .then((list) => {
         if (cancelled) return;
         setComments(list);
