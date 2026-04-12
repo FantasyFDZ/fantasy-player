@@ -75,6 +75,10 @@ pub fn run() {
             commands::panel_layout_list,
             commands::panel_layout_upsert,
             commands::panel_layout_delete,
+            commands::panel_open,
+            commands::panel_close,
+            commands::panel_open_list,
+            commands::panel_persist_geometry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -4,7 +4,7 @@
 import { usePanels } from "@/core/PanelManager/PanelProvider";
 
 export function CabinetControls() {
-  const { plugins, instances, toggle } = usePanels();
+  const { plugins, isOpen, toggle } = usePanels();
 
   if (plugins.length === 0) return null;
 
@@ -17,7 +17,7 @@ export function CabinetControls() {
       }}
     >
       {plugins.map((plugin) => {
-        const active = instances[plugin.id]?.visible ?? false;
+        const active = isOpen(plugin.id);
         return (
           <button
             key={plugin.id}

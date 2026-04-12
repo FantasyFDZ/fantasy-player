@@ -260,6 +260,24 @@ export const api = {
   async panelLayoutDelete(panelId: string) {
     return invoke<void>("panel_layout_delete", { panelId });
   },
+
+  // ---- Panel windows (multi-window architecture) ----
+  async panelOpen(panelId: string, defaultSize: { w: number; h: number }) {
+    return invoke<void>("panel_open", {
+      panelId,
+      defaultWidth: defaultSize.w,
+      defaultHeight: defaultSize.h,
+    });
+  },
+  async panelClose(panelId: string) {
+    return invoke<void>("panel_close", { panelId });
+  },
+  async panelOpenList() {
+    return invoke<string[]>("panel_open_list");
+  },
+  async panelPersistGeometry(panelId: string) {
+    return invoke<void>("panel_persist_geometry", { panelId });
+  },
 };
 
 export interface PanelLayoutRow {
@@ -297,6 +315,25 @@ export function onLlmChunk(
   handler: (chunk: LlmStreamChunk) => void,
 ): Promise<UnlistenFn> {
   return listen<LlmStreamChunk>(`melody://llm-chunk/${requestId}`, (event) =>
+    handler(event.payload),
+  );
+}
+
+/**
+ * 订阅当前歌曲变化事件。后端在任何 play/next/prev/queue_replace
+ * 成功后广播 melody://song-changed，所有窗口（主 + 面板）都能收到。
+ */
+export function onSongChanged(
+  handler: (song: Song) => void,
+): Promise<UnlistenFn> {
+  return listen<Song>("melody://song-changed", (event) => handler(event.payload));
+}
+
+/** 订阅面板窗口关闭事件（主窗口用来同步 CabinetControls 按钮状态）*/
+export function onPanelClosed(
+  handler: (panelId: string) => void,
+): Promise<UnlistenFn> {
+  return listen<string>("melody://panel-closed", (event) =>
     handler(event.payload),
   );
 }

@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main"],
+  "description": "Capability for main and panel windows",
+  "windows": ["main", "*"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -10,6 +10,7 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-set-size",
+    "core:webview:allow-create-webview-window",
     "shell:allow-open"
   ]
 }

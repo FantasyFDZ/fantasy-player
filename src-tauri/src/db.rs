@@ -340,10 +340,12 @@ fn default_providers() -> Vec<ProviderRow> {
             &["mimo-v2-pro", "mimo-v2-omni"],
         ),
         d(
-            "lmstudio",
-            "LM Studio (本地)",
+            "local",
+            "本地 (OpenAI 兼容)",
             "http://localhost:1234/v1",
             "openai",
+            // 留空——用户填模型名。默认 URL 是 LM Studio 的默认端口，
+            // Ollama / llama.cpp server / vLLM 也可以直接改
             &[],
         ),
     ]

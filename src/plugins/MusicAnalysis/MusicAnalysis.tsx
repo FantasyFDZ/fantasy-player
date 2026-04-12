@@ -23,30 +23,44 @@ export function MusicAnalysis({ song }: Props) {
     error: llmError,
     request,
   } = useLLM();
-  const [provider, setProvider] = useState<LlmProvider | null>(null);
+  const [activeProvider, setActiveProvider] = useState<LlmProvider | null>(
+    null,
+  );
+  const [activeModel, setActiveModel] = useState<string>("");
 
-  // 启动时查找第一个配置了 api_key 的 provider
+  // 从 settings 读取 ai.active_provider_id / ai.active_model
+  // 找到对应 provider
   useEffect(() => {
-    api
-      .llmProvidersList()
-      .then((list) => {
-        const p = list.find((p) => p.api_key.trim() !== "");
-        setProvider(p ?? null);
-      })
-      .catch(() => setProvider(null));
+    (async () => {
+      const providers = await api.llmProvidersList().catch(() => []);
+      const savedId = await api.getSetting("ai.active_provider_id").catch(() => null);
+      const savedModel = await api.getSetting("ai.active_model").catch(() => null);
+      if (savedId && savedModel) {
+        const p = providers.find((p) => p.id === savedId);
+        if (p) {
+          setActiveProvider(p);
+          setActiveModel(savedModel);
+          return;
+        }
+      }
+      // fallback：第一个有 key 的 provider + 第一个模型
+      const firstWithKey = providers.find(
+        (p) => p.api_key.trim() !== "" && p.models.length > 0,
+      );
+      if (firstWithKey) {
+        setActiveProvider(firstWithKey);
+        setActiveModel(firstWithKey.models[0]);
+      }
+    })();
   }, []);
 
   // 每次特征或 provider 变化触发短评生成
   useEffect(() => {
-    if (!features || !song || !provider) return;
-    const model =
-      provider.models[0] ??
-      (provider.id === "dashscope" ? "qwen3.5-plus" : "");
-    if (!model) return;
+    if (!features || !song || !activeProvider || !activeModel) return;
     const prompt = buildAnalysisPrompt(song, features);
     request({
-      provider_id: provider.id,
-      model,
+      provider_id: activeProvider.id,
+      model: activeModel,
       messages: [
         {
           role: "system",
@@ -56,10 +70,10 @@ export function MusicAnalysis({ song }: Props) {
         { role: "user", content: prompt },
       ],
       temperature: 0.7,
-      max_tokens: 256,
+      max_tokens: 512,
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [features?.bpm, features?.key, provider?.id, song?.id]);
+  }, [features?.bpm, features?.key, activeProvider?.id, activeModel, song?.id]);
 
   if (!song) {
     return <Placeholder text="选一首歌后开始分析" />;
@@ -113,7 +127,7 @@ export function MusicAnalysis({ song }: Props) {
 
       {/* LLM 短评 */}
       <LlmReview
-        provider={provider}
+        provider={activeProvider}
         loading={llmLoading}
         error={llmError}
         content={llmContent}

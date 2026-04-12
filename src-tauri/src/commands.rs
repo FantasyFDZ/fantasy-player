@@ -5,7 +5,8 @@
 //! - 阻塞操作（spawn node）用 `tauri::async_runtime::spawn_blocking` 包裹
 //! - State: AuthState / PlayerState / QueueState / Db
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 use crate::audio_analyzer::{self, AudioFeatures};
 use crate::auth::{AuthState, QrCheckOutcome, QrStartReceipt, Session};
@@ -126,7 +127,7 @@ pub async fn play_song(
     queue: State<'_, QueueState>,
     song: Song,
 ) -> Result<PlaybackStatus, String> {
-    player.ensure_running(app).map_err(|e| e.to_string())?;
+    player.ensure_running(app.clone()).map_err(|e| e.to_string())?;
     let cookie = auth.cookie();
     let id = song.id.clone();
 
@@ -144,6 +145,7 @@ pub async fn play_song(
         return Err("未能获取歌曲播放链接（可能需要登录或 VIP）".into());
     }
     player.load_url(&url.url).map_err(|e| e.to_string())?;
+    let _ = app.emit("melody://song-changed", &song);
     Ok(player.status())
 }
 
@@ -258,13 +260,14 @@ pub async fn prev_track(
 }
 
 // 内部工具：拿到一首歌 → 取 URL → load。命令层复用。
+// 成功后广播 melody://song-changed 事件，所有窗口都能收到。
 async fn play_current(
     app: AppHandle,
     auth: State<'_, AuthState>,
     player: State<'_, PlayerState>,
     song: Song,
 ) -> Result<(), String> {
-    player.ensure_running(app).map_err(|e| e.to_string())?;
+    player.ensure_running(app.clone()).map_err(|e| e.to_string())?;
     let cookie = auth.cookie();
     let id = song.id.clone();
     let url = tauri::async_runtime::spawn_blocking(move || {
@@ -276,7 +279,10 @@ async fn play_current(
     if url.url.is_empty() {
         return Err("未能获取歌曲播放链接（可能需要登录或 VIP）".into());
     }
-    player.load_url(&url.url).map_err(|e| e.to_string())
+    player.load_url(&url.url).map_err(|e| e.to_string())?;
+    // 广播 —— 主窗口和各面板子窗口都订阅此事件
+    let _ = app.emit("melody://song-changed", &song);
+    Ok(())
 }
 
 // ---- settings --------------------------------------------------------------
@@ -339,6 +345,123 @@ pub async fn llm_stream(
     llm.stream(&db, &app, &request_id, req)
         .await
         .map_err(|e| e.to_string())
+}
+
+// ---- Panel windows ---------------------------------------------------------
+//
+// 每个面板都是一个独立的 Tauri WebviewWindow，URL 为
+// `index.html?panel=<id>`。关闭时通过 window event 触发
+// `melody://panel-closed` 广播给主窗口同步 UI 状态。
+
+#[tauri::command]
+pub async fn panel_open(
+    app: AppHandle,
+    db: State<'_, Db>,
+    panel_id: String,
+    default_width: Option<f64>,
+    default_height: Option<f64>,
+) -> Result<(), String> {
+    // 已存在则 focus
+    if let Some(window) = app.get_webview_window(&panel_id) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    // 恢复持久化的位置和大小
+    let saved = db.panel_layout_get(&panel_id).map_err(|e| e.to_string())?;
+    let width = saved.as_ref().map(|r| r.width).unwrap_or_else(|| default_width.unwrap_or(360.0));
+    let height = saved.as_ref().map(|r| r.height).unwrap_or_else(|| default_height.unwrap_or(480.0));
+
+    let url = WebviewUrl::App(format!("index.html?panel={panel_id}").into());
+    let mut builder = WebviewWindowBuilder::new(&app, panel_id.clone(), url)
+        .title(format!("Melody · {panel_id}"))
+        .inner_size(width, height)
+        .min_inner_size(280.0, 280.0)
+        .resizable(true);
+
+    // 尝试恢复位置
+    if let Some(s) = saved.as_ref() {
+        builder = builder.position(s.x, s.y);
+    }
+
+    let window = builder.build().map_err(|e: tauri::Error| e.to_string())?;
+
+    // 持久化 visible=true
+    let _ = db.panel_layout_upsert(&PanelLayoutRow {
+        panel_id: panel_id.clone(),
+        x: saved.as_ref().map(|r| r.x).unwrap_or(80.0),
+        y: saved.as_ref().map(|r| r.y).unwrap_or(80.0),
+        width,
+        height,
+        visible: true,
+    });
+
+    // 监听窗口事件：close → emit panel-closed + 更新 DB visible
+    // move/resize → debounced persist 位置和大小
+    let app_for_event = app.clone();
+    let panel_id_for_event = panel_id.clone();
+    let db_label = panel_id.clone();
+    window.on_window_event(move |event| match event {
+        tauri::WindowEvent::Destroyed => {
+            let _ = app_for_event.emit("melody://panel-closed", &panel_id_for_event);
+            // 把 visible=false 写回 DB（下次打开时保留位置/大小）
+            if let Some(db) = app_for_event.try_state::<Db>() {
+                if let Ok(Some(mut row)) = db.panel_layout_get(&db_label) {
+                    row.visible = false;
+                    let _ = db.panel_layout_upsert(&row);
+                }
+            }
+        }
+        _ => {}
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn panel_close(app: AppHandle, panel_id: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(&panel_id) {
+        window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 主窗口启动时调用：返回当前打开的面板 id 列表（通过检查 Tauri 窗口注册表）
+#[tauri::command]
+pub async fn panel_open_list(app: AppHandle) -> Result<Vec<String>, String> {
+    let mut labels: Vec<String> = app
+        .webview_windows()
+        .keys()
+        .filter(|k| k.as_str() != "main")
+        .cloned()
+        .collect();
+    labels.sort();
+    Ok(labels)
+}
+
+/// 面板窗口退出前主动保存位置和大小（由前端在 window close 前调用）
+#[tauri::command]
+pub async fn panel_persist_geometry(
+    app: AppHandle,
+    db: State<'_, Db>,
+    panel_id: String,
+) -> Result<(), String> {
+    let Some(window) = app.get_webview_window(&panel_id) else {
+        return Ok(());
+    };
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let row = PanelLayoutRow {
+        panel_id: panel_id.clone(),
+        x: pos.x as f64 / scale,
+        y: pos.y as f64 / scale,
+        width: size.width as f64 / scale,
+        height: size.height as f64 / scale,
+        visible: true,
+    };
+    db.panel_layout_upsert(&row).map_err(|e| e.to_string())
 }
 
 // ---- Panel layout ----------------------------------------------------------
