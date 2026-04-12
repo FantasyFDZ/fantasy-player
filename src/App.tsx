@@ -21,6 +21,7 @@ import { PlayBar } from "@/components/PlayBar";
 import { SearchPanel } from "@/components/SearchPanel";
 import { LoginPanel } from "@/components/LoginPanel";
 import { BrandMenu } from "@/components/BrandMenu";
+import { SidePanelSwitch } from "@/components/SidePanelSwitch";
 import { PANEL_PLUGINS } from "@/plugins";
 import {
   api,
@@ -167,6 +168,9 @@ function Shell() {
 
       {/* PlayBar —— root flex 子节点，保证全窗口宽度 */}
       <PlayBar currentSong={currentSong} onSongChange={setCurrentSong} />
+
+      {/* 主窗口右边缘的展开开关 —— 打开分析面板（吸附到右边） */}
+      <SidePanelSwitch />
 
       {/* overlay */}
       {overlay !== "none" && (

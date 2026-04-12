@@ -34,6 +34,16 @@ export interface PlaylistDetail {
   tracks: Song[];
 }
 
+export interface SongComment {
+  comment_id: string;
+  user_id: string;
+  nickname: string;
+  avatar_url: string;
+  content: string;
+  liked_count: number;
+  time_ms: number;
+}
+
 export interface UserProfile {
   user_id: string;
   nickname: string;
@@ -167,6 +177,9 @@ export const api = {
   async getPlaylistDetail(id: string, limit = 500) {
     return invoke<PlaylistDetail>("get_playlist_detail", { id, limit });
   },
+  async getSongComments(id: string, limit = 10) {
+    return invoke<SongComment[]>("get_song_comments", { id, limit });
+  },
 
   // ---- playback ----
   async playSong(song: Song) {
@@ -262,11 +275,16 @@ export const api = {
   },
 
   // ---- Panel windows (multi-window architecture) ----
-  async panelOpen(panelId: string, defaultSize: { w: number; h: number }) {
+  async panelOpen(
+    panelId: string,
+    defaultSize: { w: number; h: number },
+    opts: { dockRight?: boolean } = {},
+  ) {
     return invoke<void>("panel_open", {
       panelId,
       defaultWidth: defaultSize.w,
       defaultHeight: defaultSize.h,
+      dockRight: opts.dockRight ?? false,
     });
   },
   async panelClose(panelId: string) {

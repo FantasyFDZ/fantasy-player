@@ -12,7 +12,7 @@ use crate::audio_analyzer::{self, AudioFeatures};
 use crate::auth::{AuthState, QrCheckOutcome, QrStartReceipt, Session};
 use crate::db::{Db, PanelLayoutRow};
 use crate::llm_client::{LlmClient, LlmRequest, LlmResponse, Provider};
-use crate::netease_api::{self, PlaylistDetail, Song, Playlist, Lyric};
+use crate::netease_api::{self, PlaylistDetail, Song, Playlist, Lyric, SongComment};
 use crate::player::{PlaybackStatus, PlayerState};
 use crate::queue::{PlayMode, QueueSnapshot, QueueState};
 
@@ -112,6 +112,20 @@ pub async fn get_playlist_detail(
     let cookie = auth.cookie();
     let limit = limit.unwrap_or(500);
     tauri::async_runtime::spawn_blocking(move || netease_api::playlist_detail(&id, &cookie, limit))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_song_comments(
+    auth: State<'_, AuthState>,
+    id: String,
+    limit: Option<u32>,
+) -> Result<Vec<SongComment>, String> {
+    let cookie = auth.cookie();
+    let limit = limit.unwrap_or(10);
+    tauri::async_runtime::spawn_blocking(move || netease_api::song_comments(&id, &cookie, limit))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
@@ -353,6 +367,8 @@ pub async fn llm_stream(
 // `index.html?panel=<id>`。关闭时通过 window event 触发
 // `melody://panel-closed` 广播给主窗口同步 UI 状态。
 
+/// 打开一个面板窗口。
+/// dock_right=true 时会吸附到主窗口右边缘，高度与主窗口一致。
 #[tauri::command]
 pub async fn panel_open(
     app: AppHandle,
@@ -360,6 +376,7 @@ pub async fn panel_open(
     panel_id: String,
     default_width: Option<f64>,
     default_height: Option<f64>,
+    dock_right: Option<bool>,
 ) -> Result<(), String> {
     // 已存在则 focus
     if let Some(window) = app.get_webview_window(&panel_id) {
@@ -368,20 +385,45 @@ pub async fn panel_open(
         return Ok(());
     }
 
-    // 恢复持久化的位置和大小
+    // 如果要吸附到主窗口右边，读取主窗口位置和大小并覆盖
+    let dock = dock_right.unwrap_or(false);
+    let dock_geom = if dock {
+        app.get_webview_window("main").and_then(|main| {
+            let pos = main.outer_position().ok()?;
+            let size = main.outer_size().ok()?;
+            let scale = main.scale_factor().unwrap_or(1.0);
+            Some((
+                pos.x as f64 / scale + size.width as f64 / scale,
+                pos.y as f64 / scale,
+                size.height as f64 / scale,
+            ))
+        })
+    } else {
+        None
+    };
+
+    // 恢复持久化的位置和大小（非 dock 模式）
     let saved = db.panel_layout_get(&panel_id).map_err(|e| e.to_string())?;
-    let width = saved.as_ref().map(|r| r.width).unwrap_or_else(|| default_width.unwrap_or(360.0));
-    let height = saved.as_ref().map(|r| r.height).unwrap_or_else(|| default_height.unwrap_or(480.0));
+    let width = default_width.unwrap_or(440.0);
+    let height = dock_geom
+        .map(|(_, _, h)| h)
+        .or_else(|| saved.as_ref().map(|r| r.height))
+        .unwrap_or_else(|| default_height.unwrap_or(700.0));
 
     let url = WebviewUrl::App(format!("index.html?panel={panel_id}").into());
     let mut builder = WebviewWindowBuilder::new(&app, panel_id.clone(), url)
         .title(format!("Melody · {panel_id}"))
         .inner_size(width, height)
-        .min_inner_size(280.0, 280.0)
-        .resizable(true);
+        .min_inner_size(380.0, 500.0)
+        .resizable(true)
+        .decorations(false)
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
 
-    // 尝试恢复位置
-    if let Some(s) = saved.as_ref() {
+    // 位置：dock 模式用主窗口右边；否则恢复上次位置
+    if let Some((dx, dy, _)) = dock_geom {
+        builder = builder.position(dx, dy);
+    } else if let Some(s) = saved.as_ref() {
         builder = builder.position(s.x, s.y);
     }
 

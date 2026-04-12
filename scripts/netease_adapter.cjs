@@ -229,6 +229,27 @@ async function playlistDetail({ id, cookie = "", limit = 500 }) {
   return { summary, tracks };
 }
 
+async function songComments({ id, cookie = "", limit = 10 }) {
+  // /comment/music 热评接口，按点赞数排序
+  const resp = await api.comment_music({
+    id: toStr(id),
+    limit,
+    cookie,
+  });
+  const body = resp?.body || {};
+  // 优先取 hotComments（热评），没有则降级到 comments
+  const raw = pickArray(body?.hotComments, body?.comments).slice(0, limit);
+  return raw.map((c) => ({
+    comment_id: toStr(firstDefined(c?.commentId, c?.id)),
+    user_id: toStr(c?.user?.userId),
+    nickname: toStr(c?.user?.nickname),
+    avatar_url: toStr(c?.user?.avatarUrl),
+    content: toStr(c?.content),
+    liked_count: toNum(c?.likedCount, 0),
+    time_ms: toNum(c?.time, 0),
+  }));
+}
+
 // ---- dispatch --------------------------------------------------------------
 
 const COMMANDS = {
@@ -243,6 +264,7 @@ const COMMANDS = {
   logout,
   user_playlists: userPlaylists,
   playlist_detail: playlistDetail,
+  song_comments: songComments,
 };
 
 async function main() {

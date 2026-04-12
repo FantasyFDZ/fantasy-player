@@ -79,7 +79,7 @@ export function PanelProvider({ plugins, children }: ProviderProps) {
           return next;
         }
         api
-          .panelOpen(panelId, plugin.defaultSize)
+          .panelOpen(panelId, plugin.defaultSize, { dockRight: true })
           .catch((err) => console.error("panel_open failed:", err));
         const next = new Set(prev);
         next.add(panelId);

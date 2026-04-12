@@ -10,7 +10,6 @@
 //   cabinet:        约 350×105
 //   整个 gramophone 宽约 378px
 
-import { CabinetControls } from "@/core/CabinetControls/CabinetControls";
 import { Cabinet } from "./Cabinet";
 import { Disc } from "./Disc";
 import { Tonearm } from "./Tonearm";
@@ -41,9 +40,6 @@ export function Gramophone({ coverUrl, playing }: Props) {
 
       {/* 机柜（紧跟在 disc 下方，margin-top -5px 与原型一致） */}
       <Cabinet width={CABINET_WIDTH} />
-
-      {/* 机柜下方按钮栏 —— 展开/收起面板 */}
-      <CabinetControls />
     </div>
   );
 }

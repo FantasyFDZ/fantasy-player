@@ -36,11 +36,20 @@ def analyze(audio_path: str) -> dict:
 
     # BPM —— multifeature 方法综合多个 onset detector，最稳
     rhythm = es.RhythmExtractor2013(method="multifeature")
-    bpm, beats, beats_confidence, _bpm_estimates, _bpm_intervals = rhythm(audio_es)
+    bpm, beats, beats_confidence_raw, _bpm_estimates, _bpm_intervals = rhythm(audio_es)
 
-    # 调式 —— HPCP + Krumhansl 谱
+    # Essentia 的 beats_confidence 原始范围 0-5.32，分段语义：
+    #   (0, 1]   : 不确定
+    #   (1, 1.5] : 较不确定
+    #   (1.5, 3.5]: 较确定
+    #   > 3.5    : 非常确定
+    # 归一化到 [0, 1]：以 3.5 为 100% 阈值，超过 3.5 视为 100%。
+    bpm_confidence = min(1.0, max(0.0, float(beats_confidence_raw) / 3.5))
+
+    # 调式 —— HPCP + Krumhansl 谱。key_strength 本身是 [0,1] 相关系数
     key_extractor = es.KeyExtractor()
-    key, scale, key_strength = key_extractor(audio_es)
+    key, scale, key_strength_raw = key_extractor(audio_es)
+    key_confidence = min(1.0, max(0.0, float(key_strength_raw)))
 
     # 2. librosa 路径：继续用 22050 采样率，给后面的几个频谱特征提供数据
     y, sr = librosa.load(audio_path, sr=22050, mono=True)
@@ -65,11 +74,11 @@ def analyze(audio_path: str) -> dict:
 
     return {
         "bpm": round(float(bpm), 2),
-        "bpm_confidence": round(float(beats_confidence), 3),
+        "bpm_confidence": round(bpm_confidence, 3),
         "energy": round(energy, 4),
         "valence": round(valence, 4),
         "key": key_string,
-        "key_confidence": round(float(key_strength), 3),
+        "key_confidence": round(key_confidence, 3),
         "spectral_centroid": round(centroid, 2),
         "spectral_bandwidth": round(bandwidth, 2),
         "spectral_flatness": round(flatness, 6),

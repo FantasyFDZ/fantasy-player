@@ -200,6 +200,18 @@ pub struct PlaylistDetail {
     pub tracks: Vec<Song>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SongComment {
+    pub comment_id: String,
+    pub user_id: String,
+    pub nickname: String,
+    pub avatar_url: String,
+    pub content: String,
+    pub liked_count: u64,
+    /// Unix 毫秒时间戳
+    pub time_ms: u64,
+}
+
 // ---- typed helpers ---------------------------------------------------------
 
 pub fn search_songs(query: &str, limit: u32, cookie: &str) -> Result<Vec<Song>, NeteaseError> {
@@ -247,6 +259,18 @@ pub fn playlist_detail(
 ) -> Result<PlaylistDetail, NeteaseError> {
     let data = invoke(
         "playlist_detail",
+        json!({ "id": id, "cookie": cookie, "limit": limit }),
+    )?;
+    Ok(serde_json::from_value(data)?)
+}
+
+pub fn song_comments(
+    id: &str,
+    cookie: &str,
+    limit: u32,
+) -> Result<Vec<SongComment>, NeteaseError> {
+    let data = invoke(
+        "song_comments",
         json!({ "id": id, "cookie": cookie, "limit": limit }),
     )?;
     Ok(serde_json::from_value(data)?)

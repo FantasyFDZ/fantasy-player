@@ -48,6 +48,7 @@ pub fn run() {
             commands::get_lyric,
             commands::get_user_playlists,
             commands::get_playlist_detail,
+            commands::get_song_comments,
             commands::play_song,
             commands::pause,
             commands::resume,
