@@ -1,5 +1,6 @@
 // Phase 1 entrypoint. Modules grow in subsequent sub-tasks.
 
+pub mod auth;
 pub mod netease_api;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
