@@ -40,16 +40,26 @@ export function Tonearm({ size, playing }: Props) {
         zIndex: 10,
       }}
     >
-      <svg
-        viewBox="0 0 100 130"
-        width={svgWidth}
-        height={svgHeight}
+      <div
         style={{
-          transformOrigin: "88px 10px",
+          width: "100%",
+          height: "100%",
+          transformOrigin: "88% 7.7%",
           transform: playing ? "rotate(-4deg)" : "rotate(-22deg)",
           transition: "transform 1100ms cubic-bezier(0.42, 0, 0.18, 1.02)",
         }}
       >
+        <svg
+          viewBox="0 0 100 130"
+          width={svgWidth}
+          height={svgHeight}
+          style={{
+            transformOrigin: "88px 10px",
+            animation: playing
+              ? "melody-tonearm-vibrate 0.62s ease-in-out infinite"
+              : "none",
+          }}
+        >
         {/* 主臂外层（粗，低明度） */}
         <line
           x1="88"
@@ -100,7 +110,22 @@ export function Tonearm({ size, playing }: Props) {
           stroke="var(--theme-arm-pivot-stroke)"
           strokeWidth="1"
         />
-      </svg>
+        </svg>
+      </div>
+
+      <style>{`
+        @keyframes melody-tonearm-vibrate {
+          0%   { transform: rotate(0deg); }
+          13%  { transform: rotate(0.11deg); }
+          27%  { transform: rotate(-0.14deg); }
+          41%  { transform: rotate(0.06deg); }
+          54%  { transform: rotate(0.15deg); }
+          68%  { transform: rotate(-0.09deg); }
+          82%  { transform: rotate(-0.13deg); }
+          91%  { transform: rotate(0.08deg); }
+          100% { transform: rotate(0deg); }
+        }
+      `}</style>
     </div>
   );
 }

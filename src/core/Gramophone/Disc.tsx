@@ -23,7 +23,7 @@ export function Disc({ coverUrl, size, spinning }: Props) {
   // 原型 disc 200 → disc-center 10 / disc-frame padding 5 / frame border 3
   const artSize = size * 0.56;
   const centerSize = size * 0.05;
-  const framePadding = size * 0.025;
+  const framePadding = 0;
 
   return (
     <div
@@ -36,7 +36,6 @@ export function Disc({ coverUrl, size, spinning }: Props) {
           padding: framePadding,
           borderRadius: "50%",
           background: "var(--theme-disc-frame-bg)",
-          border: "var(--theme-disc-frame-border)",
         }}
       >
         <div
