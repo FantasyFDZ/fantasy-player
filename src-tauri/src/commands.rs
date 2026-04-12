@@ -7,8 +7,10 @@
 
 use tauri::{AppHandle, State};
 
+use crate::audio_analyzer::{self, AudioFeatures};
 use crate::auth::{AuthState, QrCheckOutcome, QrStartReceipt, Session};
 use crate::db::Db;
+use crate::llm_client::{LlmClient, LlmRequest, LlmResponse, Provider};
 use crate::netease_api::{self, PlaylistDetail, Song, Playlist, Lyric};
 use crate::player::{PlaybackStatus, PlayerState};
 use crate::queue::{PlayMode, QueueSnapshot, QueueState};
@@ -287,4 +289,104 @@ pub async fn get_setting(db: State<'_, Db>, key: String) -> Result<Option<String
 #[tauri::command]
 pub async fn set_setting(db: State<'_, Db>, key: String, value: String) -> Result<(), String> {
     db.upsert_setting(&key, &value).map_err(|e| e.to_string())
+}
+
+// ---- LLM -------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn llm_providers_list(
+    llm: State<'_, LlmClient>,
+    db: State<'_, Db>,
+) -> Result<Vec<Provider>, String> {
+    llm.list_providers(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn llm_provider_upsert(
+    llm: State<'_, LlmClient>,
+    db: State<'_, Db>,
+    provider: Provider,
+) -> Result<(), String> {
+    llm.upsert_provider(&db, provider).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn llm_provider_delete(
+    llm: State<'_, LlmClient>,
+    db: State<'_, Db>,
+    id: String,
+) -> Result<(), String> {
+    llm.delete_provider(&db, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn llm_request(
+    llm: State<'_, LlmClient>,
+    db: State<'_, Db>,
+    req: LlmRequest,
+) -> Result<LlmResponse, String> {
+    llm.request(&db, req).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn llm_stream(
+    app: AppHandle,
+    llm: State<'_, LlmClient>,
+    db: State<'_, Db>,
+    request_id: String,
+    req: LlmRequest,
+) -> Result<LlmResponse, String> {
+    llm.stream(&db, &app, &request_id, req)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ---- Audio analysis --------------------------------------------------------
+
+#[tauri::command]
+pub async fn analyze_song(
+    auth: State<'_, AuthState>,
+    db: State<'_, Db>,
+    song: Song,
+) -> Result<AudioFeatures, String> {
+    // 缓存命中直接返回
+    if let Some(cached) = db.song_feature_get(&song.id).map_err(|e| e.to_string())? {
+        return Ok(cached);
+    }
+
+    // 将歌曲元数据写入 songs 表（满足 song_features 的 FK 约束）
+    db.song_upsert(
+        &song.id,
+        &song.name,
+        &song.artist,
+        &song.album,
+        &song.cover_url,
+        song.duration_secs,
+    )
+    .map_err(|e| e.to_string())?;
+
+    // 取 stream URL（通过 cookie，允许 VIP 曲目）
+    let cookie = auth.cookie();
+    let id_for_url = song.id.clone();
+    let url = tauri::async_runtime::spawn_blocking(move || {
+        netease_api::song_url(&id_for_url, "standard", &cookie)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if url.url.is_empty() {
+        return Err("未能获取歌曲音频链接".into());
+    }
+
+    // spawn_blocking 里做下载 + python sidecar
+    // tauri state 跨线程不易 move，开一个新的 Db handle 复用磁盘文件
+    let db_for_call = Db::open_default().map_err(|e| e.to_string())?;
+    let audio_url = url.url.clone();
+    let song_id_for_call = song.id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        audio_analyzer::analyze_song_blocking(&db_for_call, &song_id_for_call, &audio_url)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }

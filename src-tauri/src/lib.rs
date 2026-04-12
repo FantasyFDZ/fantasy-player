@@ -1,14 +1,17 @@
 // Phase 1 entrypoint.
 
+pub mod audio_analyzer;
 pub mod auth;
 pub mod commands;
 pub mod db;
+pub mod llm_client;
 pub mod netease_api;
 pub mod player;
 pub mod queue;
 
 use auth::AuthState;
 use db::Db;
+use llm_client::LlmClient;
 use player::PlayerState;
 use queue::QueueState;
 
@@ -18,6 +21,9 @@ pub fn run() {
     let player = PlayerState::new();
     let queue = QueueState::new();
     let db = Db::open_default().expect("failed to open melody.db");
+    // 首次启动时植入 4 个默认 Provider（api_key 为空，由用户后续填入）
+    let _ = db.seed_providers_if_empty();
+    let llm = LlmClient::new();
 
     // 启动时做一次 cookie 刷新（非阻塞——失败不影响启动）。
     let auth_for_refresh = auth.clone();
@@ -31,6 +37,7 @@ pub fn run() {
         .manage(player)
         .manage(queue)
         .manage(db)
+        .manage(llm)
         .invoke_handler(tauri::generate_handler![
             commands::auth_session,
             commands::auth_qr_start,
@@ -59,6 +66,12 @@ pub fn run() {
             commands::prev_track,
             commands::get_setting,
             commands::set_setting,
+            commands::llm_providers_list,
+            commands::llm_provider_upsert,
+            commands::llm_provider_delete,
+            commands::llm_request,
+            commands::llm_stream,
+            commands::analyze_song,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
