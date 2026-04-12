@@ -3,7 +3,7 @@
 // 原始参数（BPM、Key、能量、频谱）对用户不可见，只作为 prompt 的
 // 上下文传给 LLM，让它翻译成人话。
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useAudioFeatures } from "@/hooks/useAudioFeatures";
 import { useActiveProvider } from "@/hooks/useActiveProvider";
 import { useLLM } from "@/hooks/useLLM";
@@ -20,9 +20,17 @@ export function AnalysisSection({ song }: Props) {
   const { content, loading: llmLoading, error: llmError, request, reset } =
     useLLM();
 
+  // 去重 key —— 同一 (song, provider, model) 组合只发一次请求。
+  // Ref 在 React StrictMode 的假 unmount/remount 之间也不会丢，
+  // 所以第二次 setup 看到已存在的 key 就跳过。
+  const lastKeyRef = useRef<string>("");
+
   useEffect(() => {
     if (providerLoading) return;
     if (!features || !song || !provider || !model) return;
+    const key = `${song.id}::${provider.id}::${model}`;
+    if (lastKeyRef.current === key) return;
+    lastKeyRef.current = key;
     reset();
     request({
       provider_id: provider.id,
@@ -49,17 +57,87 @@ export function AnalysisSection({ song }: Props) {
   }, [features?.bpm, features?.key, song?.id, provider?.id, model, providerLoading]);
 
   return (
-    <AiTextDisplay
-      hasSong={!!song}
-      featuresLoading={featuresLoading}
-      featuresError={featuresError}
-      hasFeatures={!!features}
-      providerLoading={providerLoading}
-      hasProvider={!!provider && !!model}
-      llmLoading={llmLoading}
-      llmError={llmError}
-      content={content}
-    />
+    <div className="flex h-full flex-col">
+      <div className="flex-1">
+        <AiTextDisplay
+          hasSong={!!song}
+          featuresLoading={featuresLoading}
+          featuresError={featuresError}
+          hasFeatures={!!features}
+          providerLoading={providerLoading}
+          hasProvider={!!provider && !!model}
+          llmLoading={llmLoading}
+          llmError={llmError}
+          content={content}
+        />
+      </div>
+      {features && <MetricsStrip features={features} />}
+    </div>
+  );
+}
+
+// ---- 底部紧凑指标行 -----------------------------------------------------
+
+function MetricsStrip({ features }: { features: AudioFeatures }) {
+  const items = [
+    {
+      label: "BPM",
+      value: features.bpm.toFixed(0),
+    },
+    {
+      label: "Key",
+      value: features.key || "—",
+    },
+    {
+      label: "能量",
+      value: `${Math.round(features.energy * 100)}%`,
+    },
+    {
+      label: "情绪",
+      value: `${Math.round(features.valence * 100)}%`,
+    },
+  ];
+  return (
+    <div
+      className="flex items-center justify-between"
+      style={{
+        marginTop: 14,
+        paddingTop: 10,
+        borderTop: "1px solid rgba(255,255,255,0.08)",
+      }}
+    >
+      {items.map((it) => (
+        <div
+          key={it.label}
+          className="flex flex-col items-center"
+          style={{ flex: 1 }}
+        >
+          <span
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--theme-lyrics-mid)",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            {it.label}
+          </span>
+          <span
+            className="font-display"
+            style={{
+              fontSize: 15,
+              fontWeight: 500,
+              color: "var(--theme-lyrics-next)",
+              marginTop: 2,
+              lineHeight: 1,
+            }}
+          >
+            {it.value}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 

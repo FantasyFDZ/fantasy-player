@@ -1,6 +1,6 @@
 // "氛围" tab —— AI 基于歌曲信息 + 歌词写诗意的氛围描述和听歌场景。
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAudioFeatures } from "@/hooks/useAudioFeatures";
 import { useActiveProvider } from "@/hooks/useActiveProvider";
 import { useLLM } from "@/hooks/useLLM";
@@ -18,31 +18,47 @@ export function AtmosphereSection({ song }: Props) {
   const { content, loading: llmLoading, error: llmError, request, reset } =
     useLLM();
   const [lyric, setLyric] = useState<string>("");
+  // 歌词请求完成（成功或失败）才设为 true，避免在空歌词时
+  // 就先发一次 LLM 请求再发第二次
+  const [lyricReady, setLyricReady] = useState(false);
 
   // 获取歌词
   useEffect(() => {
     if (!song) {
       setLyric("");
+      setLyricReady(false);
       return;
     }
     let cancelled = false;
+    setLyricReady(false);
     api
       .getLyric(song.id)
       .then((l) => {
         if (cancelled) return;
         setLyric(l.lrc);
+        setLyricReady(true);
       })
       .catch(() => {
-        if (!cancelled) setLyric("");
+        if (!cancelled) {
+          setLyric("");
+          setLyricReady(true);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [song?.id]);
 
+  // 去重：同一 (song, provider, model) 组合只发一次
+  const lastKeyRef = useRef<string>("");
+
   useEffect(() => {
     if (providerLoading) return;
     if (!features || !song || !provider || !model) return;
+    if (!lyricReady) return; // 等歌词请求结束再发
+    const key = `${song.id}::${provider.id}::${model}`;
+    if (lastKeyRef.current === key) return;
+    lastKeyRef.current = key;
     reset();
     request({
       provider_id: provider.id,
@@ -69,7 +85,14 @@ export function AtmosphereSection({ song }: Props) {
       max_tokens: 1024,
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [features?.bpm, song?.id, provider?.id, model, providerLoading, lyric]);
+  }, [
+    features?.bpm,
+    song?.id,
+    provider?.id,
+    model,
+    providerLoading,
+    lyricReady,
+  ]);
 
   return (
     <AiTextDisplay
