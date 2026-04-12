@@ -129,8 +129,8 @@ function Shell() {
           <div
             className="absolute flex items-center"
             style={{
-              // 11.694vw - 1.905vw (= -20px at 1050) = 9.789vw
-              left: "calc(9.789vw - 20px)",
+              // 13.599vw - 1.905vw (= -20px at 1050) = 11.694vw
+              left: "calc(11.694vw - 20px)",
               top: 0,
               bottom: 0,
             }}
@@ -140,7 +140,8 @@ function Shell() {
           <div
             className="absolute flex flex-col"
             style={{
-              left: "calc(58.140vw - 20px)",
+              // 60.045vw - 1.905vw (= -20px at 1050) = 58.140vw
+              left: "calc(60.045vw - 20px)",
               width: "37.209vw",
               top: 0,
               bottom: 0,
