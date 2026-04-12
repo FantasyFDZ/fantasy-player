@@ -34,11 +34,12 @@ export function Lyrics({ song }: Props) {
   const [loading, setLoading] = useState(false);
   const lastIdxRef = useRef(-1);
 
-  // 拉歌词
+  // 拉歌词 —— 只依赖 song.id 避免每次 song 对象重建触发重拉
   useEffect(() => {
     if (!song) {
       setLines([]);
       setActiveIndex(-1);
+      lastIdxRef.current = -1;
       return;
     }
     let cancelled = false;
@@ -49,6 +50,7 @@ export function Lyrics({ song }: Props) {
         if (cancelled) return;
         setLines(parseLyrics(lyric.lrc, lyric.tlyric));
         setActiveIndex(-1);
+        lastIdxRef.current = -1;
         setLoading(false);
       })
       .catch(() => {
@@ -60,20 +62,37 @@ export function Lyrics({ song }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [song]);
+  }, [song?.id]);
 
-  // 播放事件驱动当前行
+  // 保持最新 lines 引用 —— listener 从 ref 读取，避免 [lines] 依赖
+  // 导致的 listener 重复注册/残留问题
+  const linesRef = useRef<LyricLine[]>([]);
+  useEffect(() => {
+    linesRef.current = lines;
+  }, [lines]);
+
+  // 播放事件驱动当前行 —— ONLY once on mount
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let mounted = true;
     onPlaybackUpdate((status: PlaybackStatus) => {
-      const next = findActiveLineIndex(lines, status.position);
+      if (!mounted) return;
+      const next = findActiveLineIndex(linesRef.current, status.position);
       if (next !== lastIdxRef.current) {
         lastIdxRef.current = next;
         setActiveIndex(next);
       }
-    }).then((fn) => (unlisten = fn));
-    return () => unlisten?.();
-  }, [lines]);
+    })
+      .then((fn) => {
+        if (mounted) unlisten = fn;
+        else fn(); // 组件已卸载，立即清理
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
+  }, []);
 
   // 选取当前行前后 WINDOW 行 —— 共 2*WINDOW + 1 条
   const visible: Array<{ line: LyricLine | null; distance: number }> = [];

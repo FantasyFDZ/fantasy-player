@@ -9,7 +9,12 @@
 
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { api, onSongChanged, type Song } from "@/lib/api";
+import {
+  api,
+  onPlaybackUpdate,
+  onSongChanged,
+  type Song,
+} from "@/lib/api";
 import { PANEL_PLUGINS } from "@/plugins";
 
 interface Props {
@@ -20,28 +25,62 @@ export function PanelWindow({ panelId }: Props) {
   const plugin = PANEL_PLUGINS.find((p) => p.id === panelId);
   const [song, setSong] = useState<Song | null>(null);
 
-  // 启动时拉当前歌，并订阅后续变化
+  // 启动时拉当前歌 + 订阅变化。
+  //
+  // 跨窗口事件传递在某些 Tauri 版本上不完全可靠，所以用两条路线：
+  //   1. 主路线：melody://song-changed 事件（后端切歌时广播 Song）
+  //   2. 兜底：melody://playback-update 每 ~400ms 触发一次，
+  //      节流到 1.5 秒调一次 queueSnapshot 检查 id 是否变化
   useEffect(() => {
     let cancelled = false;
+    let lastKnownId: string | null = null;
+    let lastCheckTs = 0;
 
-    api
-      .queueSnapshot()
-      .then((snap) => {
+    const refreshFromSnapshot = async () => {
+      try {
+        const snap = await api.queueSnapshot();
         if (cancelled) return;
-        if (snap.current_index !== null && snap.tracks[snap.current_index]) {
-          setSong(snap.tracks[snap.current_index]);
+        const next =
+          snap.current_index !== null
+            ? (snap.tracks[snap.current_index] ?? null)
+            : null;
+        const nextId = next?.id ?? null;
+        if (nextId !== lastKnownId) {
+          lastKnownId = nextId;
+          setSong(next);
         }
-      })
+      } catch {
+        /* ignore */
+      }
+    };
+
+    refreshFromSnapshot();
+
+    const listeners: Array<() => void> = [];
+
+    // 主路线
+    onSongChanged((s) => {
+      if (cancelled) return;
+      lastKnownId = s.id;
+      setSong(s);
+    })
+      .then((fn) => listeners.push(fn))
       .catch(() => {});
 
-    let unlisten: (() => void) | undefined;
-    onSongChanged((s) => {
-      if (!cancelled) setSong(s);
-    }).then((fn) => (unlisten = fn));
+    // 兜底
+    onPlaybackUpdate(() => {
+      if (cancelled) return;
+      const now = Date.now();
+      if (now - lastCheckTs < 1500) return;
+      lastCheckTs = now;
+      refreshFromSnapshot();
+    })
+      .then((fn) => listeners.push(fn))
+      .catch(() => {});
 
     return () => {
       cancelled = true;
-      unlisten?.();
+      listeners.forEach((fn) => fn());
     };
   }, []);
 
