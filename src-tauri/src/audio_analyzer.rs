@@ -47,14 +47,17 @@ pub enum AnalyzeError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioFeatures {
     pub bpm: f64,
-    /// BPM 置信度（Essentia beats_confidence，0-1 左右，>5 基本靠谱）
+    /// BPM 置信度 0-1，融合后的最终结果
     #[serde(default)]
     pub bpm_confidence: f64,
+    /// 多算法的候选 BPM 数组（multifeature、Percival 等）
+    #[serde(default)]
+    pub bpm_candidates: Vec<f64>,
     pub energy: f64,
     pub valence: f64,
-    /// 调式，大调 "C"，小调 "Cm"（参考 Rekordbox 写法）
+    /// 调式，大调 "C"，小调 "Cm"
     pub key: String,
-    /// 调式置信度（Essentia key_strength，0-1）
+    /// 调式置信度 0-1
     #[serde(default)]
     pub key_confidence: f64,
     pub spectral_centroid: f64,
@@ -284,6 +287,7 @@ impl Db {
             Ok(Some(AudioFeatures {
                 bpm: row.get(0)?,
                 bpm_confidence: row.get(1)?,
+                bpm_candidates: Vec::new(), // 不缓存候选
                 energy: row.get(2)?,
                 valence: row.get(3)?,
                 key: row.get::<_, Option<String>>(4)?.unwrap_or_default(),

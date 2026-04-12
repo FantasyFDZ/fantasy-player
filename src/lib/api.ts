@@ -130,13 +130,15 @@ export interface LlmResponse {
 
 export interface AudioFeatures {
   bpm: number;
-  /** BPM 置信度（Essentia beats_confidence），0 左右表示不可信 */
+  /** BPM 置信度 0-1，融合后的最终结果 */
   bpm_confidence: number;
+  /** 多算法候选 BPM（[multifeature, percival]），用于前端提示 */
+  bpm_candidates: number[];
   energy: number;
   valence: number;
   /** 调式，大调 "C"，小调 "Cm" */
   key: string;
-  /** 调式置信度（Essentia key_strength），0-1 */
+  /** 调式置信度 0-1 */
   key_confidence: number;
   spectral_centroid: number;
   spectral_bandwidth: number;
