@@ -1,6 +1,7 @@
 // Phase 1 entrypoint. Modules grow in subsequent sub-tasks.
 
 pub mod auth;
+pub mod db;
 pub mod netease_api;
 pub mod player;
 pub mod queue;
