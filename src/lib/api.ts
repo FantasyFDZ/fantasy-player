@@ -120,9 +120,14 @@ export interface LlmResponse {
 
 export interface AudioFeatures {
   bpm: number;
+  /** BPM 置信度（Essentia beats_confidence），0 左右表示不可信 */
+  bpm_confidence: number;
   energy: number;
   valence: number;
+  /** 调式，大调 "C"，小调 "Cm" */
   key: string;
+  /** 调式置信度（Essentia key_strength），0-1 */
+  key_confidence: number;
   spectral_centroid: number;
   spectral_bandwidth: number;
   spectral_flatness: number;

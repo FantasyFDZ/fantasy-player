@@ -14,6 +14,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Instant;
 
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
@@ -46,9 +47,16 @@ pub enum AnalyzeError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioFeatures {
     pub bpm: f64,
+    /// BPM 置信度（Essentia beats_confidence，0-1 左右，>5 基本靠谱）
+    #[serde(default)]
+    pub bpm_confidence: f64,
     pub energy: f64,
     pub valence: f64,
+    /// 调式，大调 "C"，小调 "Cm"（参考 Rekordbox 写法）
     pub key: String,
+    /// 调式置信度（Essentia key_strength，0-1）
+    #[serde(default)]
+    pub key_confidence: f64,
     pub spectral_centroid: f64,
     pub spectral_bandwidth: f64,
     pub spectral_flatness: f64,
@@ -144,16 +152,46 @@ pub fn analyze_song_blocking(
     audio_url: &str,
 ) -> Result<AudioFeatures, AnalyzeError> {
     if let Some(cached) = db.song_feature_get(song_id)? {
+        eprintln!("[audio_analyzer] {} cache hit", song_id);
         return Ok(cached);
     }
 
+    let t0 = Instant::now();
+
     // 下载到临时文件
+    eprintln!("[audio_analyzer] {} downloading full audio…", song_id);
     let tmp = download_to_tempfile(audio_url)?;
+    let dl_bytes = tmp.as_file().metadata().map(|m| m.len()).unwrap_or(0);
+    let dl_elapsed = t0.elapsed();
+    eprintln!(
+        "[audio_analyzer] {} downloaded {:.1} KB in {:.2}s",
+        song_id,
+        dl_bytes as f64 / 1024.0,
+        dl_elapsed.as_secs_f64()
+    );
+
     // 分析
+    let t_analyze = Instant::now();
     let features = run_sidecar(tmp.path())?;
+    eprintln!(
+        "[audio_analyzer] {} essentia+librosa analyzed in {:.2}s \
+         (bpm={:.1} conf={:.2}, key={} conf={:.2})",
+        song_id,
+        t_analyze.elapsed().as_secs_f64(),
+        features.bpm,
+        features.bpm_confidence,
+        features.key,
+        features.key_confidence,
+    );
+
     // 回写缓存
     db.song_feature_upsert(song_id, &features)?;
-    // 临时文件随 TempFile drop 自动删除
+    eprintln!(
+        "[audio_analyzer] {} total {:.2}s, cached to song_features",
+        song_id,
+        t0.elapsed().as_secs_f64()
+    );
+
     drop(tmp);
     Ok(features)
 }
@@ -235,7 +273,8 @@ impl Db {
     ) -> Result<Option<AudioFeatures>, crate::db::DbError> {
         let conn = self.conn_lock();
         let mut stmt = conn.prepare(
-            "SELECT bpm, energy, valence, key,
+            "SELECT bpm, COALESCE(bpm_confidence, 0), energy, valence,
+                    key, COALESCE(key_confidence, 0),
                     spectral_centroid, spectral_bandwidth, spectral_flatness,
                     spectral_rolloff, zero_crossing_rate
              FROM song_features WHERE song_id = ?1",
@@ -244,14 +283,16 @@ impl Db {
         if let Some(row) = rows.next()? {
             Ok(Some(AudioFeatures {
                 bpm: row.get(0)?,
-                energy: row.get(1)?,
-                valence: row.get(2)?,
-                key: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                spectral_centroid: row.get(4)?,
-                spectral_bandwidth: row.get(5)?,
-                spectral_flatness: row.get(6)?,
-                spectral_rolloff: row.get(7)?,
-                zero_crossing_rate: row.get(8)?,
+                bpm_confidence: row.get(1)?,
+                energy: row.get(2)?,
+                valence: row.get(3)?,
+                key: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                key_confidence: row.get(5)?,
+                spectral_centroid: row.get(6)?,
+                spectral_bandwidth: row.get(7)?,
+                spectral_flatness: row.get(8)?,
+                spectral_rolloff: row.get(9)?,
+                zero_crossing_rate: row.get(10)?,
             }))
         } else {
             Ok(None)
@@ -266,15 +307,19 @@ impl Db {
         let conn = self.conn_lock();
         conn.execute(
             "INSERT INTO song_features
-               (song_id, bpm, energy, valence, key,
+               (song_id, bpm, bpm_confidence, energy, valence,
+                key, key_confidence,
                 spectral_centroid, spectral_bandwidth, spectral_flatness,
                 spectral_rolloff, zero_crossing_rate, analyzed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, strftime('%s','now'))
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                     strftime('%s','now'))
              ON CONFLICT(song_id) DO UPDATE SET
                bpm = excluded.bpm,
+               bpm_confidence = excluded.bpm_confidence,
                energy = excluded.energy,
                valence = excluded.valence,
                key = excluded.key,
+               key_confidence = excluded.key_confidence,
                spectral_centroid = excluded.spectral_centroid,
                spectral_bandwidth = excluded.spectral_bandwidth,
                spectral_flatness = excluded.spectral_flatness,
@@ -284,9 +329,11 @@ impl Db {
             rusqlite::params![
                 song_id,
                 f.bpm,
+                f.bpm_confidence,
                 f.energy,
                 f.valence,
                 f.key,
+                f.key_confidence,
                 f.spectral_centroid,
                 f.spectral_bandwidth,
                 f.spectral_flatness,

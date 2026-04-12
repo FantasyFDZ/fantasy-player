@@ -42,8 +42,14 @@ fn end_to_end_analyze_real_song() {
     .expect("song_upsert");
     let features = analyze_song_blocking(&db, &song.id, &url.url).expect("analyze");
     eprintln!(
-        "[step3] bpm={:.1} energy={:.3} valence={:.3} key={}",
-        features.bpm, features.energy, features.valence, features.key
+        "[step3] bpm={:.1} (conf {:.2}) key={} (conf {:.2}) \
+         energy={:.3} valence={:.3}",
+        features.bpm,
+        features.bpm_confidence,
+        features.key,
+        features.key_confidence,
+        features.energy,
+        features.valence
     );
     eprintln!(
         "        spectral: centroid={:.0} bandwidth={:.0} rolloff={:.0} zcr={:.4}",
