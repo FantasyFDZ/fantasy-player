@@ -10,9 +10,10 @@ import {
 
 interface Props {
   currentSong: Song | null;
+  onSongChange: (song: Song | null) => void;
 }
 
-export function PlayBar({ currentSong }: Props) {
+export function PlayBar({ currentSong, onSongChange }: Props) {
   const [status, setStatus] = useState<PlaybackStatus>({
     state: "idle",
     position: 0,
@@ -28,14 +29,17 @@ export function PlayBar({ currentSong }: Props) {
 
     onPlaybackUpdate(setStatus).then((fn) => (unlistenUpdate = fn));
     onTrackEnded(() => {
-      api.nextTrack(true).catch(() => {});
+      api
+        .nextTrack(true)
+        .then((song) => onSongChange(song))
+        .catch(() => {});
     }).then((fn) => (unlistenEnded = fn));
 
     return () => {
       unlistenUpdate?.();
       unlistenEnded?.();
     };
-  }, []);
+  }, [onSongChange]);
 
   const isPlaying = status.state === "playing";
 
@@ -94,7 +98,12 @@ export function PlayBar({ currentSong }: Props) {
       {/* transport */}
       <div className="flex items-center gap-2">
         <button
-          onClick={() => api.prevTrack().catch(() => {})}
+          onClick={() =>
+            api
+              .prevTrack()
+              .then((song) => onSongChange(song))
+              .catch(() => {})
+          }
           className="rounded bg-white/5 px-3 py-1 text-sm hover:bg-white/10"
         >
           ⏮
@@ -106,7 +115,12 @@ export function PlayBar({ currentSong }: Props) {
           {isPlaying ? "⏸" : "▶"}
         </button>
         <button
-          onClick={() => api.nextTrack(false).catch(() => {})}
+          onClick={() =>
+            api
+              .nextTrack(false)
+              .then((song) => onSongChange(song))
+              .catch(() => {})
+          }
           className="rounded bg-white/5 px-3 py-1 text-sm hover:bg-white/10"
         >
           ⏭

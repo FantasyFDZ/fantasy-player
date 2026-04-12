@@ -71,7 +71,7 @@ export default function App() {
         )}
       </div>
 
-      <PlayBar currentSong={currentSong} />
+      <PlayBar currentSong={currentSong} onSongChange={setCurrentSong} />
     </div>
   );
 }
