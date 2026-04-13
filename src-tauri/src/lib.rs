@@ -7,17 +7,22 @@ pub mod db;
 pub mod llm_client;
 pub mod netease_api;
 pub mod player;
+pub mod qq_auth;
+pub mod qqmusic_api;
 pub mod queue;
+pub mod sync;
 
 use auth::AuthState;
 use db::Db;
 use llm_client::LlmClient;
 use player::PlayerState;
+use qq_auth::QQAuthState;
 use queue::QueueState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let auth = AuthState::load();
+    let qq_auth = QQAuthState::load();
     let player = PlayerState::new();
     let queue = QueueState::new();
     let db = Db::open_default().expect("failed to open melody.db");
@@ -31,9 +36,17 @@ pub fn run() {
         let _ = tauri::async_runtime::spawn_blocking(move || auth_for_refresh.refresh()).await;
     });
 
+    // QQ 音乐 cookie 刷新
+    let qq_auth_for_refresh = qq_auth.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ =
+            tauri::async_runtime::spawn_blocking(move || qq_auth_for_refresh.refresh()).await;
+    });
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(auth)
+        .manage(qq_auth)
         .manage(player)
         .manage(queue)
         .manage(db)
@@ -49,6 +62,8 @@ pub fn run() {
             commands::get_user_playlists,
             commands::get_playlist_detail,
             commands::get_song_comments,
+            commands::create_playlist,
+            commands::add_tracks_to_playlist,
             commands::play_song,
             commands::pause,
             commands::resume,
@@ -73,6 +88,13 @@ pub fn run() {
             commands::llm_request,
             commands::llm_stream,
             commands::analyze_song,
+            commands::qq_auth_session,
+            commands::qq_auth_login_cookie,
+            commands::qq_auth_refresh,
+            commands::qq_auth_logout,
+            commands::qq_get_playlists,
+            commands::qq_get_playlist_detail,
+            commands::sync_playlists,
             commands::panel_layout_list,
             commands::panel_layout_upsert,
             commands::panel_layout_delete,

@@ -14,7 +14,10 @@ use crate::db::{Db, PanelLayoutRow};
 use crate::llm_client::{LlmClient, LlmRequest, LlmResponse, Provider};
 use crate::netease_api::{self, PlaylistDetail, Song, Playlist, Lyric, SongComment};
 use crate::player::{PlaybackStatus, PlayerState};
+use crate::qq_auth::{QQAuthState, QQSession, QQUserProfile};
+use crate::qqmusic_api::{self, QQPlaylist, QQPlaylistDetail};
 use crate::queue::{PlayMode, QueueSnapshot, QueueState};
+use crate::sync::{self, SyncProgress, SyncReport, SyncSource, SyncTarget};
 
 // ---- auth ------------------------------------------------------------------
 
@@ -129,6 +132,33 @@ pub async fn get_song_comments(
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_playlist(
+    auth: State<'_, AuthState>,
+    name: String,
+) -> Result<netease_api::PlaylistCreateReceipt, String> {
+    let cookie = auth.cookie();
+    tauri::async_runtime::spawn_blocking(move || netease_api::create_playlist(&name, &cookie))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn add_tracks_to_playlist(
+    auth: State<'_, AuthState>,
+    playlist_id: String,
+    track_ids: Vec<String>,
+) -> Result<netease_api::PlaylistTrackAddResult, String> {
+    let cookie = auth.cookie();
+    tauri::async_runtime::spawn_blocking(move || {
+        netease_api::add_tracks_to_playlist(&playlist_id, &track_ids, &cookie)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 // ---- playback --------------------------------------------------------------
@@ -527,6 +557,116 @@ pub async fn panel_layout_delete(
     panel_id: String,
 ) -> Result<(), String> {
     db.panel_layout_delete(&panel_id).map_err(|e| e.to_string())
+}
+
+// ---- QQ Music auth ---------------------------------------------------------
+
+#[tauri::command]
+pub async fn qq_auth_session(qq_auth: State<'_, QQAuthState>) -> Result<QQSession, String> {
+    Ok(qq_auth.snapshot())
+}
+
+#[tauri::command]
+pub async fn qq_auth_login_cookie(
+    qq_auth: State<'_, QQAuthState>,
+    cookie: String,
+) -> Result<QQUserProfile, String> {
+    let qq_auth = qq_auth.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || qq_auth.login_with_cookie(&cookie))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn qq_auth_refresh(
+    qq_auth: State<'_, QQAuthState>,
+) -> Result<Option<QQUserProfile>, String> {
+    let qq_auth = qq_auth.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || qq_auth.refresh())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn qq_auth_logout(qq_auth: State<'_, QQAuthState>) -> Result<(), String> {
+    let qq_auth = qq_auth.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || qq_auth.logout())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+// ---- QQ Music catalog ------------------------------------------------------
+
+#[tauri::command]
+pub async fn qq_get_playlists(
+    qq_auth: State<'_, QQAuthState>,
+) -> Result<Vec<QQPlaylist>, String> {
+    let user = qq_auth
+        .current_user()
+        .ok_or_else(|| "未登录 QQ 音乐".to_string())?;
+    let cookie = qq_auth.cookie();
+    tauri::async_runtime::spawn_blocking(move || {
+        qqmusic_api::user_playlists(&user.uin, &cookie)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn qq_get_playlist_detail(
+    qq_auth: State<'_, QQAuthState>,
+    disstid: String,
+) -> Result<QQPlaylistDetail, String> {
+    let cookie = qq_auth.cookie();
+    tauri::async_runtime::spawn_blocking(move || {
+        qqmusic_api::playlist_detail(&disstid, &cookie, 500)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+// ---- Playlist sync ---------------------------------------------------------
+
+#[tauri::command]
+pub async fn sync_playlists(
+    app: AppHandle,
+    auth: State<'_, AuthState>,
+    qq_auth: State<'_, QQAuthState>,
+    source: SyncSource,
+    target: SyncTarget,
+    playlist_ids: Vec<String>,
+) -> Result<Vec<SyncReport>, String> {
+    let auth = auth.inner().clone();
+    let qq_auth = qq_auth.inner().clone();
+    let app_handle = app.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut reports = Vec::new();
+        for pid in &playlist_ids {
+            let app_for_cb = app_handle.clone();
+            let progress_cb = move |progress: SyncProgress| {
+                let _ = app_for_cb.emit("sync-progress", &progress);
+            };
+            let report = match (&source, &target) {
+                (SyncSource::Qq, SyncTarget::Netease) => {
+                    sync::migrate_qq_to_netease(&qq_auth, &auth, pid, progress_cb)
+                }
+                (SyncSource::Netease, SyncTarget::Qq) => {
+                    sync::migrate_netease_to_qq(&auth, &qq_auth, pid, progress_cb)
+                }
+                _ => Err(format!("不支持的迁移方向: {:?} -> {:?}", source, target)),
+            }?;
+            reports.push(report);
+        }
+        Ok(reports)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ---- Audio analysis --------------------------------------------------------
