@@ -1,5 +1,4 @@
-// 网易云高赞点评 section —— 调用 /comment/music 接口
-// 显示 Top N 热评：头像 + 昵称 + 内容 + 点赞数
+// 云抑 —— 只展示最高赞的一条网易云热评
 
 import { useEffect, useState } from "react";
 import { api, type Song, type SongComment } from "@/lib/api";
@@ -9,13 +8,13 @@ interface Props {
 }
 
 export function CommentsSection({ song }: Props) {
-  const [comments, setComments] = useState<SongComment[]>([]);
+  const [comment, setComment] = useState<SongComment | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!song) {
-      setComments([]);
+      setComment(null);
       setError(null);
       return;
     }
@@ -23,10 +22,10 @@ export function CommentsSection({ song }: Props) {
     setLoading(true);
     setError(null);
     api
-      .getSongComments(song.id, 20)
+      .getSongComments(song.id, 1)
       .then((list) => {
         if (cancelled) return;
-        setComments(list);
+        setComment(list.length > 0 ? list[0] : null);
         setLoading(false);
       })
       .catch((err) => {
@@ -39,116 +38,60 @@ export function CommentsSection({ song }: Props) {
     };
   }, [song?.id]);
 
-  if (!song) {
-    return (
-      <div
-        style={{
-          padding: "24px 16px",
-          textAlign: "center",
-          color: "var(--theme-lyrics-mid)",
-          fontSize: 12,
-        }}
-      >
-        选一首歌查看热评
-      </div>
-    );
-  }
-  if (loading) {
-    return (
-      <div
-        style={{
-          padding: "20px 16px",
-          textAlign: "center",
-          color: "var(--theme-lyrics-mid)",
-          fontSize: 12,
-        }}
-      >
-        正在获取热评…
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div
-        style={{
-          padding: "20px 16px",
-          color: "rgba(255,180,160,0.9)",
-          fontSize: 12,
-        }}
-      >
-        获取失败：{error}
-      </div>
-    );
-  }
-  if (comments.length === 0) {
-    return (
-      <div
-        style={{
-          padding: "20px 16px",
-          textAlign: "center",
-          color: "var(--theme-lyrics-mid)",
-          fontSize: 12,
-        }}
-      >
-        暂无热评
-      </div>
-    );
-  }
+  const dimStyle: React.CSSProperties = {
+    textAlign: "center",
+    color: "var(--theme-lyrics-mid)",
+    fontSize: 11,
+  };
+
+  if (!song) return null;
+  if (loading) return <div style={dimStyle}>...</div>;
+  if (error) return null;
+  if (!comment) return null;
 
   return (
     <div className="flex flex-col gap-2">
       <div
         style={{
-          fontSize: 10,
+          fontSize: 9,
           letterSpacing: "0.18em",
           color: "var(--theme-label)",
           filter: "brightness(1.4)",
           fontFamily: "var(--font-mono)",
-          marginBottom: 4,
+          textTransform: "uppercase",
         }}
       >
-        网易云 · 高赞评论 · Top {comments.length}
+        云抑
       </div>
-      {comments.map((c) => (
-        <CommentCard key={c.comment_id} comment={c} />
-      ))}
-    </div>
-  );
-}
-
-function CommentCard({ comment }: { comment: SongComment }) {
-  return (
-    <div
-      className="flex gap-3"
-      style={{
-        padding: "10px 12px",
-        borderRadius: 8,
-        background: "rgba(0,0,0,0.3)",
-        border: "1px solid rgba(0,0,0,0.45)",
-        boxShadow: "inset 0 1px 2px rgba(0,0,0,0.5)",
-      }}
-    >
-      {comment.avatar_url && (
-        <img
-          src={comment.avatar_url}
-          alt=""
+      <div
+        style={{
+          padding: "10px 12px",
+          borderRadius: 8,
+          background: "rgba(0,0,0,0.3)",
+          border: "1px solid rgba(0,0,0,0.45)",
+          boxShadow: "inset 0 1px 2px rgba(0,0,0,0.5)",
+        }}
+      >
+        <div
           style={{
-            width: 32,
-            height: 32,
-            borderRadius: "50%",
-            flexShrink: 0,
-            boxShadow: "0 1px 2px rgba(0,0,0,0.5)",
+            fontSize: 12,
+            color: "var(--theme-lyrics-next)",
+            lineHeight: 1.8,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
           }}
-        />
-      )}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex items-center justify-between">
+        >
+          {comment.content}
+        </div>
+        <div
+          className="flex items-center justify-between"
+          style={{ marginTop: 6 }}
+        >
           <span
             style={{
-              fontSize: 11,
-              color: "var(--theme-accent)",
+              fontSize: 10,
+              color: "var(--theme-lyrics-mid)",
               fontFamily: "var(--font-display)",
-              fontWeight: 500,
             }}
           >
             {comment.nickname}
@@ -160,20 +103,8 @@ function CommentCard({ comment }: { comment: SongComment }) {
               fontFamily: "var(--font-mono)",
             }}
           >
-            ♥ {formatCount(comment.liked_count)}
+            {"\u2665"} {formatCount(comment.liked_count)}
           </span>
-        </div>
-        <div
-          style={{
-            fontSize: 12,
-            color: "var(--theme-lyrics-next)",
-            lineHeight: 1.6,
-            marginTop: 3,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}
-        >
-          {comment.content}
         </div>
       </div>
     </div>

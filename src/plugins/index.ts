@@ -9,7 +9,7 @@ import { PlaylistSync } from "./PlaylistSync/PlaylistSync";
 export const PANEL_PLUGINS: PanelPlugin[] = [
   {
     id: "music_analysis",
-    name: "音乐分析",
+    name: "音绪",
     icon: "◎",
     minSize: { w: 380, h: 500 },
     defaultSize: { w: 440, h: 700 },

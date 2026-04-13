@@ -1,8 +1,6 @@
-// 聚合面板 —— 三个 tab：解析 / 氛围 / 网抑云
-// 右上角齿轮 ⚙ 打开模型设置 modal（覆盖在当前 tab 之上）
+// 音绪面板 —— 独白 + 云抑（最高赞评论）合并为一页
 //
-// 打开方式：主窗口右边缘的展开开关。窗口吸附到主窗口右侧，
-// 高度与主窗口一致。
+// 右上角齿轮 ⚙ 打开模型设置 modal
 
 import { useState } from "react";
 import { SettingsPanel } from "@/components/SettingsPanel";
@@ -14,66 +12,16 @@ interface Props {
   song: Song | null;
 }
 
-type Tab = "monologue" | "comments";
-
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: "monologue", label: "独白" },
-  { id: "comments", label: "网抑云" },
-];
-
 export function MusicAnalysis({ song }: Props) {
-  const [tab, setTab] = useState<Tab>("monologue");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     <div className="relative flex h-full flex-col">
-      {/* 顶部 tab 栏 —— 左边 3 个 tab，右边齿轮 */}
+      {/* 顶栏 —— 标题 + 齿轮 */}
       <div
-        className="flex items-center"
-        style={{
-          marginBottom: 12,
-          gap: 6,
-        }}
+        className="flex items-center justify-end"
+        style={{ marginBottom: 8 }}
       >
-        <div
-          className="flex flex-1 gap-1"
-          style={{
-            padding: 4,
-            borderRadius: 8,
-            background: "rgba(0,0,0,0.3)",
-            border: "1px solid rgba(0,0,0,0.45)",
-          }}
-        >
-          {TABS.map((t) => {
-            const active = tab === t.id;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setTab(t.id)}
-                className="flex-1 transition-all"
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 5,
-                  fontSize: 12,
-                  fontFamily: "var(--font-ui)",
-                  cursor: "pointer",
-                  color: active
-                    ? "var(--theme-accent)"
-                    : "var(--theme-lyrics-mid)",
-                  background: active
-                    ? "rgba(255,255,255,0.08)"
-                    : "transparent",
-                  border: active
-                    ? "1px solid var(--theme-accent)"
-                    : "1px solid transparent",
-                }}
-              >
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
@@ -96,13 +44,26 @@ export function MusicAnalysis({ song }: Props) {
         </button>
       </div>
 
-      {/* Tab 内容 */}
-      <div className="flex-1 overflow-y-auto" style={{ padding: "4px 2px" }}>
-        {tab === "monologue" && <MonologueSection song={song} />}
-        {tab === "comments" && <CommentsSection song={song} />}
+      {/* 内容：独白 + 云抑 */}
+      <div
+        className="flex flex-1 flex-col gap-4 overflow-y-auto"
+        style={{ padding: "4px 2px" }}
+      >
+        <MonologueSection song={song} />
+
+        {/* 分隔线 */}
+        <div
+          style={{
+            height: 1,
+            background: "rgba(255,255,255,0.06)",
+            margin: "4px 0",
+          }}
+        />
+
+        <CommentsSection song={song} />
       </div>
 
-      {/* 设置 modal —— 覆盖整个面板内容 */}
+      {/* 设置 modal */}
       {settingsOpen && (
         <div
           className="absolute inset-0 flex flex-col"
