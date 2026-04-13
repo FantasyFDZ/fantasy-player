@@ -49,10 +49,10 @@ export function MusicAnalysis({ song }: Props) {
         </button>
       </div>
 
-      {/* 上半：独白（flex-1 可滚动） */}
+      {/* 上半：独白（占 50% 高度，可滚动） */}
       <div
-        className="flex-1 overflow-y-auto"
-        style={{ padding: "4px 2px", minHeight: 0 }}
+        className="overflow-y-auto"
+        style={{ padding: "4px 2px", minHeight: 0, flex: "1 1 50%" }}
       >
         <div
           style={{
@@ -70,8 +70,8 @@ export function MusicAnalysis({ song }: Props) {
         <MonologueSection song={song} />
       </div>
 
-      {/* 中部：云抑（固定，不滚动） */}
-      <div style={{ flexShrink: 0, padding: "0 2px" }}>
+      {/* 中部：云抑（固定在中间，占剩余空间） */}
+      <div style={{ flex: "0 0 auto", padding: "0 2px" }}>
         <div
           style={{
             height: 1,
