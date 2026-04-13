@@ -294,7 +294,11 @@ export function AiPlaylist(_props: Props) {
           <div style={{ marginBottom: 12 }}>
             <AssistantBubble>
               {content ? (
-                <StreamingText text={content} />
+                <StreamingBubble
+                  text={content}
+                  matchRecommendations={matchRecommendations}
+                  onPlay={handlePlay}
+                />
               ) : (
                 <TypingIndicator />
               )}
@@ -408,6 +412,83 @@ function buildSystemPrompt(librarySummary: string, totalCount: number): string {
 }
 
 // ---- helpers --------------------------------------------------------------
+
+/**
+ * Incrementally extract complete song objects from a streaming LLM response.
+ *
+ * As the LLM generates a JSON array token by token, this function finds all
+ * complete `{...}` objects that have appeared so far inside the first `[...]`
+ * block and parses each one individually. Incomplete trailing objects are
+ * silently ignored — they'll be picked up once more tokens arrive.
+ */
+function extractPartialSongs(text: string): SongRecommendation[] {
+  // Strip <think> blocks and code fences first
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, "");
+  cleaned = cleaned.replace(/```(?:json|JSON)?\s*\n?([\s\S]*?)\n?\s*```/g, "$1");
+
+  const startIdx = cleaned.indexOf("[");
+  if (startIdx === -1) return [];
+
+  const results: SongRecommendation[] = [];
+
+  // Walk from after the '[' and find each complete top-level {...} object
+  let i = startIdx + 1;
+  while (i < cleaned.length) {
+    // Skip whitespace and commas between objects
+    const ch = cleaned[i];
+    if (ch === " " || ch === "\n" || ch === "\r" || ch === "\t" || ch === ",") {
+      i++;
+      continue;
+    }
+    // If we hit ']', the array is closed
+    if (ch === "]") break;
+    // Expect an opening brace
+    if (ch !== "{") {
+      i++;
+      continue;
+    }
+
+    // Find the matching closing brace using balanced bracket counting
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let endIdx = -1;
+
+    for (let j = i; j < cleaned.length; j++) {
+      const c = cleaned[j];
+      if (escape) { escape = false; continue; }
+      if (c === "\\" && inString) { escape = true; continue; }
+      if (c === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (c === "{") depth++;
+      else if (c === "}") {
+        depth--;
+        if (depth === 0) {
+          endIdx = j;
+          break;
+        }
+      }
+    }
+
+    if (endIdx === -1) {
+      // Incomplete object — stop here; more tokens will complete it
+      break;
+    }
+
+    const objStr = cleaned.slice(i, endIdx + 1);
+    try {
+      const obj = JSON.parse(objStr);
+      if (obj && typeof obj.name === "string" && typeof obj.artist === "string") {
+        results.push(obj as SongRecommendation);
+      }
+    } catch {
+      // Malformed object — skip it
+    }
+    i = endIdx + 1;
+  }
+
+  return results;
+}
 
 /** Strip <think> blocks, markdown code fences, and the JSON array from an
  *  assistant message, leaving only the natural-language text portion. */
@@ -1071,19 +1152,71 @@ function TypingIndicator() {
   );
 }
 
-/** 流式文字展示 */
-function StreamingText({ text }: { text: string }) {
-  const cleaned = text.replace(/<think>[\s\S]*?<\/think>\s*/g, "").trim();
+/**
+ * Streaming assistant bubble — displays stripped text + incrementally parsed
+ * song cards as the LLM generates tokens.
+ */
+function StreamingBubble({
+  text,
+  matchRecommendations,
+  onPlay,
+}: {
+  text: string;
+  matchRecommendations: (recs: SongRecommendation[]) => Song[];
+  onPlay: (song: Song) => void;
+}) {
+  const textPart = stripJsonArray(text);
+
+  // Incrementally parse complete song objects from the stream
+  const partialRecs = useMemo(() => extractPartialSongs(text), [text]);
+  const matchedSongs = useMemo(
+    () => (partialRecs.length > 0 ? matchRecommendations(partialRecs) : []),
+    [partialRecs, matchRecommendations],
+  );
+
+  // Build id -> Song map for the cards
+  const songMap = useMemo(
+    () => new Map(matchedSongs.map((s) => [s.id, s])),
+    [matchedSongs],
+  );
+
+  const hasText = textPart.length > 0;
+  const hasCards = partialRecs.length > 0;
+
   return (
-    <div
-      style={{
-        fontSize: 13,
-        lineHeight: 1.7,
-        color: "var(--text-primary, var(--theme-lyrics-next))",
-        whiteSpace: "pre-wrap",
-      }}
-    >
-      {cleaned || <TypingIndicator />}
+    <div>
+      {hasText && (
+        <div
+          style={{
+            fontSize: 13,
+            lineHeight: 1.7,
+            color: "var(--text-primary, var(--theme-lyrics-next))",
+            whiteSpace: "pre-wrap",
+            marginBottom: hasCards ? 8 : 0,
+          }}
+        >
+          {textPart}
+        </div>
+      )}
+      {hasCards && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {partialRecs.map((rec, i) => {
+            const song = songMap.get(rec.id) ?? null;
+            return (
+              <SongCard
+                key={`${rec.id}-${i}`}
+                rec={rec}
+                song={song}
+                checked={false}
+                onToggle={() => {}}
+                onPlay={onPlay}
+              />
+            );
+          })}
+        </div>
+      )}
+      {!hasText && !hasCards && <TypingIndicator />}
     </div>
   );
 }
+
