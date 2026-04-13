@@ -4,9 +4,10 @@
 
 import { useState } from "react";
 import { SettingsPanel } from "@/components/SettingsPanel";
+import { useAudioFeatures } from "@/hooks/useAudioFeatures";
 import type { Song } from "@/lib/api";
 import { CommentsSection } from "./CommentsSection";
-import { MonologueSection } from "./MonologueSection";
+import { MetricsStrip, MonologueSection } from "./MonologueSection";
 
 interface Props {
   song: Song | null;
@@ -14,6 +15,7 @@ interface Props {
 
 export function MusicAnalysis({ song }: Props) {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const { features } = useAudioFeatures(song);
 
   return (
     <div className="relative flex h-full flex-col">
@@ -75,6 +77,9 @@ export function MusicAnalysis({ song }: Props) {
         />
 
         <CommentsSection song={song} />
+
+        {/* 音频指标条 —— 固定在最底部 */}
+        {features && <MetricsStrip features={features} />}
       </div>
 
       {/* 设置 modal */}

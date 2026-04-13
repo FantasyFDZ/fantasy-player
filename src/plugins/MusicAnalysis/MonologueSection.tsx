@@ -160,10 +160,12 @@ export function MonologueSection({ song }: Props) {
           hasRequested={hasRequested}
         />
       </div>
-      {features && <MetricsStrip features={features} />}
     </div>
   );
 }
+
+// 导出 MetricsStrip 供 MusicAnalysis.tsx 在最底部使用
+export { MetricsStrip };
 
 // ---- prompt 构造 --------------------------------------------------------
 //
