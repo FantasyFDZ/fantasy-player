@@ -130,9 +130,12 @@ impl QQAuthState {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        // Prefer the uin extracted from cookie — the API may return "0"
+        // for encrypted accounts.
         let returned_uin = detail
             .get("uin")
             .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty() && *v != "0")
             .unwrap_or(&uin)
             .to_string();
 
@@ -182,6 +185,7 @@ impl QQAuthState {
                 let returned_uin = detail
                     .get("uin")
                     .and_then(|v| v.as_str())
+                    .filter(|v| !v.is_empty() && *v != "0")
                     .unwrap_or(&uin)
                     .to_string();
 
