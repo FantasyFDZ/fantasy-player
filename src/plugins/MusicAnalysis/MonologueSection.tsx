@@ -145,8 +145,8 @@ export function MonologueSection({ song }: Props) {
   ]);
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex-1">
+    <div className="flex flex-col">
+      <div>
         <AiTextDisplay
           hasSong={!!song}
           featuresLoading={featuresLoading}
