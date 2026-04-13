@@ -17,7 +17,7 @@ interface Props {
 }
 
 export function MonologueSection({ song }: Props) {
-  const { features, loading: featuresLoading, error: featuresError } =
+  const { features, loading: featuresLoading, error: featuresError, songId: featuresSongId } =
     useAudioFeatures(song);
   const { provider, model, loading: providerLoading } = useActiveProvider();
   const { content, loading: llmLoading, error: llmError, stream, reset } =
@@ -65,26 +65,15 @@ export function MonologueSection({ song }: Props) {
     setHasRequested(false);
   }, [song?.id]);
 
-  // Track which song.id the current features belong to.
-  // useAudioFeatures sets loading=true on song change, but the old `features`
-  // object lingers in the same render frame. This ref prevents firing the LLM
-  // with stale features from the previous song.
-  const featuresForSongRef = useRef<string>("");
-  useEffect(() => {
-    if (features && !featuresLoading && song) {
-      featuresForSongRef.current = song.id;
-    }
-    if (!song) {
-      featuresForSongRef.current = "";
-    }
-  }, [features, featuresLoading, song?.id]);
-
   useEffect(() => {
     if (providerLoading || featuresLoading) return;
     if (!features || !song || !provider || !model) return;
     if (!lyricReady) return;
-    // Ensure features actually belong to the current song
-    if (featuresForSongRef.current !== song.id) return;
+    // The hook now returns songId alongside features. During the render
+    // where song changes, setState in useAudioFeatures sets songId to
+    // the new id immediately (before features resolve), so stale features
+    // from a previous song will have featuresSongId !== song.id.
+    if (featuresSongId !== song.id) return;
     const key = `${song.id}::${provider.id}::${model}`;
     if (lastKeyRef.current === key) return;
     lastKeyRef.current = key;
@@ -136,6 +125,7 @@ export function MonologueSection({ song }: Props) {
     song?.id,
     features,
     featuresLoading,
+    featuresSongId,
     provider?.id,
     model,
     providerLoading,
