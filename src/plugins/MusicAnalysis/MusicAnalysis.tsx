@@ -49,6 +49,20 @@ export function MusicAnalysis({ song }: Props) {
         className="flex flex-1 flex-col gap-4 overflow-y-auto"
         style={{ padding: "4px 2px" }}
       >
+        {/* 独白标题 */}
+        <div
+          style={{
+            fontSize: 9,
+            letterSpacing: "0.18em",
+            color: "var(--theme-label)",
+            filter: "brightness(1.4)",
+            fontFamily: "var(--font-mono)",
+            textTransform: "uppercase",
+          }}
+        >
+          独白
+        </div>
+
         <MonologueSection song={song} />
 
         {/* 分隔线 */}
