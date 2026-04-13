@@ -88,21 +88,44 @@ function normalizePlaylist(record) {
 async function setCookie({ cookie = "" }) {
   if (!cookie) throw new Error("missing cookie");
   qqMusic.setCookie(cookie);
-  return { ok: true };
+  return { status: "cookie_set" };
 }
 
+// ---- QR login (cookie-paste fallback) ---------------------------------------
+
+/**
+ * qr_create — QQ Music QR login is not available from a headless Node.js
+ * process because QQ's ptqrlogin endpoint enforces strict browser-only
+ * anti-bot checks (403 on non-browser user agents).
+ *
+ * Instead, the Rust UI should show a "paste cookie" dialog.  The user can
+ * obtain cookies from a browser session (DevTools -> Application -> Cookies
+ * on y.qq.com) and paste them here.
+ *
+ * Returns: { method: "cookie_paste", instructions }
+ */
 async function qrCreate() {
-  // qq-music-api does not have QR login routes;
-  // QR login must be handled externally (e.g. via web scraping or dedicated QR API).
-  throw new Error(
-    "qq-music-api does not support QR login; use browser cookie injection instead",
-  );
+  return {
+    method: "cookie_paste",
+    instructions:
+      "QQ音乐暂不支持扫码登录（服务端反爬限制）。" +
+      "请在浏览器中访问 y.qq.com 并登录，然后打开开发者工具 → " +
+      "Application → Cookies → https://y.qq.com，" +
+      "复制全部 cookie 字符串粘贴到输入框中。",
+  };
 }
 
+/**
+ * qr_check — Not applicable for cookie-paste flow.
+ * Returns a fixed status telling the Rust side to use set_cookie instead.
+ */
 async function qrCheck() {
-  throw new Error(
-    "qq-music-api does not support QR login; use browser cookie injection instead",
-  );
+  return {
+    status: "unsupported",
+    message:
+      "QQ音乐使用 cookie 粘贴登录，无需轮询二维码状态。" +
+      "请调用 set_cookie 传入浏览器 cookie。",
+  };
 }
 
 async function userDetail({ id, cookie = "" }) {
