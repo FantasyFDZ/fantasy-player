@@ -1,4 +1,7 @@
-// 音绪面板 —— 独白 + 云抑（最高赞评论）合并为一页
+// 音绪面板 —— 三段式布局：
+//   上：独白（可滚动）
+//   中：云抑（固定位置）
+//   底：音频指标条（固定底部）
 //
 // 右上角齿轮 ⚙ 打开模型设置 modal
 
@@ -19,10 +22,10 @@ export function MusicAnalysis({ song }: Props) {
 
   return (
     <div className="relative flex h-full flex-col">
-      {/* 顶栏 —— 标题 + 齿轮 */}
+      {/* 顶栏 —— 齿轮 */}
       <div
         className="flex items-center justify-end"
-        style={{ marginBottom: 8 }}
+        style={{ marginBottom: 8, flexShrink: 0 }}
       >
         <button
           type="button"
@@ -46,12 +49,11 @@ export function MusicAnalysis({ song }: Props) {
         </button>
       </div>
 
-      {/* 内容：独白 + 云抑 */}
+      {/* 上半：独白（flex-1 可滚动） */}
       <div
-        className="flex flex-1 flex-col gap-4 overflow-y-auto"
-        style={{ padding: "4px 2px" }}
+        className="flex-1 overflow-y-auto"
+        style={{ padding: "4px 2px", minHeight: 0 }}
       >
-        {/* 独白标题 */}
         <div
           style={{
             fontSize: 9,
@@ -60,27 +62,32 @@ export function MusicAnalysis({ song }: Props) {
             filter: "brightness(1.4)",
             fontFamily: "var(--font-mono)",
             textTransform: "uppercase",
+            marginBottom: 8,
           }}
         >
           独白
         </div>
-
         <MonologueSection song={song} />
+      </div>
 
-        {/* 分隔线 */}
+      {/* 中部：云抑（固定，不滚动） */}
+      <div style={{ flexShrink: 0, padding: "0 2px" }}>
         <div
           style={{
             height: 1,
             background: "rgba(255,255,255,0.06)",
-            margin: "4px 0",
+            margin: "8px 0",
           }}
         />
-
         <CommentsSection song={song} />
-
-        {/* 音频指标条 —— 固定在最底部 */}
-        {features && <MetricsStrip features={features} />}
       </div>
+
+      {/* 底部：音频指标条（固定，不滚动） */}
+      {features && (
+        <div style={{ flexShrink: 0, padding: "0 2px" }}>
+          <MetricsStrip features={features} />
+        </div>
+      )}
 
       {/* 设置 modal */}
       {settingsOpen && (
