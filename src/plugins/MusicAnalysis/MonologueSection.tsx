@@ -238,16 +238,14 @@ function buildPrompt(
     );
   }
 
-  // —— Tier 3：人声 / 风格 / 情绪 / 乐器 ——
+  // —— Tier 3：人声 / 风格 / 情绪 ——
+  // voice_gender 和 instrument_tags 由 Essentia TF 模型生成，对中文歌曲
+  // 准确率很低（性别常错、乐器误检），不传给 LLM 以免引入错误信息。
+  // LLM 可从歌手名 + 歌词自行判断性别，从频谱特征推断乐器风格。
   if (features.voice_instrumental) {
     const v =
-      features.voice_instrumental === "voice"
-        ? `以人声为主${features.voice_gender ? `（${features.voice_gender === "male" ? "男声" : "女声"}）` : ""}`
-        : "纯器乐";
+      features.voice_instrumental === "voice" ? "以人声为主" : "纯器乐";
     lines.push(`声音构成：${v}`);
-  }
-  if (features.instrument_tags && features.instrument_tags.length > 0) {
-    lines.push(`主要乐器：${features.instrument_tags.slice(0, 4).join("、")}`);
   }
   if (features.mood_tags && features.mood_tags.length > 0) {
     lines.push(`情绪标签：${features.mood_tags.join("、")}`);
