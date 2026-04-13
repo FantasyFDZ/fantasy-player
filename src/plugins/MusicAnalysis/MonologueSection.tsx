@@ -117,8 +117,10 @@ export function MonologueSection({ song }: Props) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    features?.bpm,
+    // Use song.id + a features fingerprint to detect real changes.
+    // features?.bpm alone can collide across songs with similar tempo.
     song?.id,
+    features,
     provider?.id,
     model,
     providerLoading,
