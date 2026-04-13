@@ -13,6 +13,13 @@ use crate::netease_api;
 use crate::qq_auth::QQAuthState;
 use crate::qqmusic_api;
 
+/// Search interval between requests to avoid 405 rate-limiting.
+const SEARCH_INTERVAL: Duration = Duration::from_millis(1500);
+/// Max retries on 405 rate-limit errors.
+const MAX_RETRIES: u32 = 3;
+/// Backoff after 405 (doubles on each retry).
+const RETRY_BACKOFF: Duration = Duration::from_secs(5);
+
 // ---- types -----------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +112,25 @@ pub fn normalize_for_match(s: &str) -> String {
     collapsed
 }
 
+/// Retry a search call if it fails with a 405 rate-limit error.
+fn retry_on_rate_limit<T, F>(mut f: F) -> Result<T, String>
+where
+    F: FnMut() -> Result<T, String>,
+{
+    let mut backoff = RETRY_BACKOFF;
+    for attempt in 0..=MAX_RETRIES {
+        match f() {
+            Ok(v) => return Ok(v),
+            Err(e) if e.contains("405") && attempt < MAX_RETRIES => {
+                thread::sleep(backoff);
+                backoff *= 2;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!()
+}
+
 // ---- QQ → NetEase ----------------------------------------------------------
 
 /// Migrate a QQ playlist to NetEase.
@@ -146,7 +172,11 @@ where
         });
 
         let query = format!("{} {}", song.name, song.artist);
-        match netease_api::search_songs(&query, 5, &netease_cookie) {
+        let search_result = retry_on_rate_limit(|| {
+            netease_api::search_songs(&query, 5, &netease_cookie)
+                .map_err(|e| e.to_string())
+        });
+        match search_result {
             Ok(results) => {
                 let norm_name = normalize_for_match(&song.name);
                 let norm_artist = normalize_for_match(&song.artist);
@@ -177,8 +207,7 @@ where
             }
         }
 
-        // 200ms throttle between search requests
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(SEARCH_INTERVAL);
     }
 
     let matched = matched_ids.len();
@@ -202,7 +231,7 @@ where
         let ids: Vec<String> = chunk.to_vec();
         netease_api::add_tracks_to_playlist(&receipt.playlist_id, &ids, &netease_cookie)
             .map_err(|e| format!("添加歌曲失败: {e}"))?;
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(SEARCH_INTERVAL);
     }
 
     Ok(SyncReport {
@@ -255,7 +284,11 @@ where
         });
 
         let query = format!("{} {}", song.name, song.artist);
-        match qqmusic_api::search_songs(&query, 5, &qq_cookie) {
+        let search_result = retry_on_rate_limit(|| {
+            qqmusic_api::search_songs(&query, 5, &qq_cookie)
+                .map_err(|e| e.to_string())
+        });
+        match search_result {
             Ok(results) => {
                 let norm_name = normalize_for_match(&song.name);
                 let norm_artist = normalize_for_match(&song.artist);
@@ -286,8 +319,7 @@ where
             }
         }
 
-        // 200ms throttle between search requests
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(SEARCH_INTERVAL);
     }
 
     let matched = matched_mids.len();
@@ -311,7 +343,7 @@ where
         let mids: Vec<String> = chunk.to_vec();
         qqmusic_api::add_to_playlist(&mids, &receipt.dirid, &qq_cookie)
             .map_err(|e| format!("添加歌曲失败: {e}"))?;
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(SEARCH_INTERVAL);
     }
 
     Ok(SyncReport {
