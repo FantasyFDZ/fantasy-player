@@ -127,7 +127,7 @@ export function MonologueSection({ song }: Props) {
         },
       ],
       temperature: 0.85,
-      max_tokens: 400,
+      max_tokens: 800,
     }).catch((err) => {
       console.error("[MonologueSection] llm stream failed:", err);
       // 注意：失败时不要清 lastKeyRef —— 否则若失败原因是持续性的
