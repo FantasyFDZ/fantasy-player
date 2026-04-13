@@ -49,10 +49,10 @@ export function MusicAnalysis({ song }: Props) {
         </button>
       </div>
 
-      {/* 上半：独白（占 50% 高度，可滚动） */}
+      {/* 独白（按内容高度，超出时可滚动，最多占 50%） */}
       <div
         className="overflow-y-auto"
-        style={{ padding: "4px 2px", minHeight: 0, flex: "1 1 50%" }}
+        style={{ padding: "4px 2px", minHeight: 0, maxHeight: "50%" }}
       >
         <div
           style={{
@@ -70,19 +70,25 @@ export function MusicAnalysis({ song }: Props) {
         <MonologueSection song={song} />
       </div>
 
-      {/* 中部：云抑（固定在中间，占剩余空间） */}
-      <div style={{ flex: "0 0 auto", padding: "0 2px" }}>
+      {/* 弹性间距 —— 把云抑推到中间 */}
+      <div style={{ flex: 1 }} />
+
+      {/* 云抑（固定） */}
+      <div style={{ flexShrink: 0, padding: "0 2px" }}>
         <div
           style={{
             height: 1,
             background: "rgba(255,255,255,0.06)",
-            margin: "8px 0",
+            marginBottom: 8,
           }}
         />
         <CommentsSection song={song} />
       </div>
 
-      {/* 底部：音频指标条（固定，不滚动） */}
+      {/* 弹性间距 —— 把指标条推到底部 */}
+      <div style={{ flex: 1 }} />
+
+      {/* 音频指标条（固定底部） */}
       {features && (
         <div style={{ flexShrink: 0, padding: "0 2px" }}>
           <MetricsStrip features={features} />
