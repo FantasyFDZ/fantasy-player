@@ -126,6 +126,66 @@ export interface LlmResponse {
   usage: LlmUsage | null;
 }
 
+// ---- QQ Music -------------------------------------------------------------
+
+export interface QQUserProfile {
+  uin: string;
+  nickname: string;
+  avatar_url: string;
+}
+
+export interface QQSession {
+  cookie: string;
+  user: QQUserProfile | null;
+}
+
+export interface QQSong {
+  mid: string;
+  id: string;
+  name: string;
+  artist: string;
+  album: string;
+  duration: number;
+}
+
+export interface QQPlaylist {
+  disstid: string;
+  name: string;
+  song_cnt: number;
+  cover: string;
+}
+
+export interface QQPlaylistDetail {
+  info: QQPlaylist;
+  songs: QQSong[];
+}
+
+// ---- Playlist sync --------------------------------------------------------
+
+export type SyncSource = "qq" | "netease";
+export type SyncTarget = "qq" | "netease";
+
+export interface SkippedSong {
+  name: string;
+  artist: string;
+  reason: string;
+}
+
+export interface SyncReport {
+  playlist_name: string;
+  total: number;
+  matched: number;
+  skipped: number;
+  skipped_songs: SkippedSong[];
+}
+
+export interface SyncProgress {
+  playlist_name: string;
+  current: number;
+  total: number;
+  current_song: string;
+}
+
 // ---- Audio features -------------------------------------------------------
 
 export interface AudioFeatures {
@@ -216,6 +276,18 @@ export const api = {
   async getSongComments(id: string, limit = 10) {
     return invoke<SongComment[]>("get_song_comments", { id, limit });
   },
+  async createPlaylist(name: string) {
+    return invoke<{ playlist_id: string; playlist_name: string }>(
+      "create_playlist",
+      { name },
+    );
+  },
+  async addTracksToPlaylist(playlistId: string, trackIds: string[]) {
+    return invoke<{ ok: boolean; code: number }>(
+      "add_tracks_to_playlist",
+      { playlistId, trackIds },
+    );
+  },
 
   // ---- playback ----
   async playSong(song: Song) {
@@ -292,6 +364,41 @@ export const api = {
   },
   async llmStream(requestId: string, req: LlmRequestParams) {
     return invoke<LlmResponse>("llm_stream", { requestId, req });
+  },
+
+  // ---- QQ Music auth ----
+  async qqSession() {
+    return invoke<QQSession>("qq_auth_session");
+  },
+  async qqLoginCookie(cookie: string) {
+    return invoke<QQUserProfile>("qq_auth_login_cookie", { cookie });
+  },
+  async qqRefresh() {
+    return invoke<QQUserProfile | null>("qq_auth_refresh");
+  },
+  async qqLogout() {
+    return invoke<void>("qq_auth_logout");
+  },
+
+  // ---- QQ Music catalog ----
+  async qqGetPlaylists() {
+    return invoke<QQPlaylist[]>("qq_get_playlists");
+  },
+  async qqGetPlaylistDetail(disstid: string) {
+    return invoke<QQPlaylistDetail>("qq_get_playlist_detail", { disstid });
+  },
+
+  // ---- Playlist sync ----
+  async syncPlaylists(
+    source: SyncSource,
+    target: SyncTarget,
+    playlistIds: string[],
+  ) {
+    return invoke<SyncReport[]>("sync_playlists", {
+      source,
+      target,
+      playlistIds,
+    });
   },
 
   // ---- Audio analysis ----
@@ -388,6 +495,15 @@ export function onPanelClosed(
   handler: (panelId: string) => void,
 ): Promise<UnlistenFn> {
   return listen<string>("melody://panel-closed", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** 订阅歌单迁移进度事件 */
+export function onSyncProgress(
+  handler: (progress: SyncProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<SyncProgress>("sync-progress", (event) =>
     handler(event.payload),
   );
 }
