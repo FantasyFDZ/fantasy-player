@@ -65,10 +65,26 @@ export function MonologueSection({ song }: Props) {
     setHasRequested(false);
   }, [song?.id]);
 
+  // Track which song.id the current features belong to.
+  // useAudioFeatures sets loading=true on song change, but the old `features`
+  // object lingers in the same render frame. This ref prevents firing the LLM
+  // with stale features from the previous song.
+  const featuresForSongRef = useRef<string>("");
   useEffect(() => {
-    if (providerLoading) return;
+    if (features && !featuresLoading && song) {
+      featuresForSongRef.current = song.id;
+    }
+    if (!song) {
+      featuresForSongRef.current = "";
+    }
+  }, [features, featuresLoading, song?.id]);
+
+  useEffect(() => {
+    if (providerLoading || featuresLoading) return;
     if (!features || !song || !provider || !model) return;
     if (!lyricReady) return;
+    // Ensure features actually belong to the current song
+    if (featuresForSongRef.current !== song.id) return;
     const key = `${song.id}::${provider.id}::${model}`;
     if (lastKeyRef.current === key) return;
     lastKeyRef.current = key;
@@ -117,10 +133,9 @@ export function MonologueSection({ song }: Props) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    // Use song.id + a features fingerprint to detect real changes.
-    // features?.bpm alone can collide across songs with similar tempo.
     song?.id,
     features,
+    featuresLoading,
     provider?.id,
     model,
     providerLoading,
