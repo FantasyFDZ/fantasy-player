@@ -154,7 +154,7 @@ where
     }
 
     // 1. Load QQ playlist
-    let qq_detail = qqmusic_api::playlist_detail(qq_playlist_id, &qq_cookie, 500)
+    let qq_detail = qqmusic_api::playlist_detail(qq_playlist_id, &qq_cookie)
         .map_err(|e| format!("获取 QQ 歌单失败: {e}"))?;
     let playlist_name = qq_detail.info.name.clone();
     let total = qq_detail.songs.len();

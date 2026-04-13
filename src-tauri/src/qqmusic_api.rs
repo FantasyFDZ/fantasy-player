@@ -218,11 +218,10 @@ pub fn user_playlists(id: &str, cookie: &str) -> Result<Vec<QQPlaylist>, QQMusic
 pub fn playlist_detail(
     id: &str,
     cookie: &str,
-    limit: u32,
 ) -> Result<QQPlaylistDetail, QQMusicError> {
     let data = invoke(
         "playlist_detail",
-        json!({ "id": id, "cookie": cookie, "limit": limit }),
+        json!({ "id": id, "cookie": cookie }),
     )?;
     Ok(serde_json::from_value(data)?)
 }

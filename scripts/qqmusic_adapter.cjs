@@ -151,7 +151,7 @@ async function userPlaylists({ id, cookie = "" }) {
     .filter(Boolean);
 }
 
-async function playlistDetail({ id, cookie = "", limit = 500 }) {
+async function playlistDetail({ id, cookie = "" }) {
   if (cookie) qqMusic.setCookie(cookie);
   if (!id) throw new Error("missing id (playlist disstid)");
   const data = await qqMusic.api("songlist", { id });
@@ -167,8 +167,7 @@ async function playlistDetail({ id, cookie = "", limit = 500 }) {
   };
   const songs = pickArray(data?.songlist, data?.tracks, data?.songs)
     .map(normalizeSong)
-    .filter(Boolean)
-    .slice(0, limit);
+    .filter(Boolean);
   return { info, songs };
 }
 

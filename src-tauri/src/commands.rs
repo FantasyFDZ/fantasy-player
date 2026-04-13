@@ -441,6 +441,9 @@ pub async fn panel_open(
         .unwrap_or_else(|| default_height.unwrap_or(700.0));
 
     let url = WebviewUrl::App(format!("index.html?panel={panel_id}").into());
+    let main_window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
     let mut builder = WebviewWindowBuilder::new(&app, panel_id.clone(), url)
         .title(format!("Melody · {panel_id}"))
         .inner_size(width, height)
@@ -448,7 +451,9 @@ pub async fn panel_open(
         .resizable(true)
         .decorations(false)
         .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true);
+        .hidden_title(true)
+        .parent(&main_window)
+        .map_err(|e| e.to_string())?;
 
     // 位置：dock 模式用主窗口右边；否则恢复上次位置
     if let Some((dx, dy, _)) = dock_geom {
@@ -623,7 +628,7 @@ pub async fn qq_get_playlist_detail(
 ) -> Result<QQPlaylistDetail, String> {
     let cookie = qq_auth.cookie();
     tauri::async_runtime::spawn_blocking(move || {
-        qqmusic_api::playlist_detail(&disstid, &cookie, 500)
+        qqmusic_api::playlist_detail(&disstid, &cookie)
     })
     .await
     .map_err(|e| e.to_string())?
