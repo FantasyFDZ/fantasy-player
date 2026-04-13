@@ -250,6 +250,38 @@ async function songComments({ id, cookie = "", limit = 10 }) {
   }));
 }
 
+// ---- playlist write ops -----------------------------------------------------
+
+async function createPlaylist({ name, cookie = "" }) {
+  const playlistName = toStr(name) || "新建歌单";
+  const resp = await api.playlist_create({ name: playlistName, cookie });
+  const playlist = firstDefined(
+    resp?.body?.playlist,
+    resp?.body?.data,
+    resp?.body,
+    {},
+  );
+  const playlistId = toStr(firstDefined(playlist?.id, playlist?.playlistId));
+  return {
+    playlist_id: playlistId,
+    playlist_name: toStr(firstDefined(playlist?.name, playlistName)),
+  };
+}
+
+async function addTracksToPlaylist({ playlistId, trackIds, cookie = "" }) {
+  const pid = toStr(playlistId);
+  if (!pid) throw new Error("missing playlistId");
+  const ids = pickArray(trackIds);
+  if (ids.length === 0) throw new Error("trackIds is empty");
+  const resp = await api.playlist_track_add({
+    pid,
+    tracks: ids.map((id) => toStr(id)).join(","),
+    cookie,
+  });
+  const code = toNum(resp?.body?.code || resp?.body?.status, 0);
+  return { ok: code === 200 || code === 0, code };
+}
+
 // ---- dispatch --------------------------------------------------------------
 
 const COMMANDS = {
@@ -265,6 +297,8 @@ const COMMANDS = {
   user_playlists: userPlaylists,
   playlist_detail: playlistDetail,
   song_comments: songComments,
+  create_playlist: createPlaylist,
+  add_tracks_to_playlist: addTracksToPlaylist,
 };
 
 async function main() {
@@ -303,8 +337,13 @@ async function main() {
 
   try {
     const data = await handler(payload);
-    process.stdout.write(JSON.stringify({ ok: true, data }) + "\n");
-    process.exit(0);
+    const ok = process.stdout.write(JSON.stringify({ ok: true, data }) + "\n");
+    if (ok) {
+      process.exit(0);
+    } else {
+      // stdout buffer full — wait for drain before exiting
+      process.stdout.once("drain", () => process.exit(0));
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stdout.write(JSON.stringify({ ok: false, error: message }) + "\n");

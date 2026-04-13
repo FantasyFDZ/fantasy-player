@@ -273,8 +273,13 @@ async function main() {
 
   try {
     const data = await handler(payload);
-    process.stdout.write(JSON.stringify({ ok: true, data }) + "\n");
-    process.exit(0);
+    const ok = process.stdout.write(JSON.stringify({ ok: true, data }) + "\n");
+    if (ok) {
+      process.exit(0);
+    } else {
+      // stdout buffer full — wait for drain before exiting
+      process.stdout.once("drain", () => process.exit(0));
+    }
   } catch (error) {
     // qq-music-api rejects with plain {message} objects, not Error instances.
     const message =
