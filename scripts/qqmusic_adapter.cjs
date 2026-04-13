@@ -273,20 +273,18 @@ async function main() {
 
   try {
     const data = await handler(payload);
-    const ok = process.stdout.write(JSON.stringify({ ok: true, data }) + "\n");
-    if (ok) {
-      process.exit(0);
-    } else {
-      // stdout buffer full — wait for drain before exiting
-      process.stdout.once("drain", () => process.exit(0));
-    }
+    const json = JSON.stringify({ ok: true, data }) + "\n";
+    await new Promise((resolve, reject) => {
+      process.stdout.write(json, (err) => (err ? reject(err) : resolve()));
+    });
+    process.exit(0);
   } catch (error) {
     // qq-music-api rejects with plain {message} objects, not Error instances.
     const message =
       error instanceof Error
         ? error.message
-        : typeof error === "object" && error?.message
-          ? String(error.message)
+        : typeof error === "object" && error !== null
+          ? error.message || JSON.stringify(error)
           : String(error);
     process.stdout.write(JSON.stringify({ ok: false, error: message }) + "\n");
     process.stderr.write(message + "\n");

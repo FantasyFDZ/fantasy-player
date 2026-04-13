@@ -278,8 +278,14 @@ async function addTracksToPlaylist({ playlistId, trackIds, cookie = "" }) {
     tracks: ids.map((id) => toStr(id)).join(","),
     cookie,
   });
-  const code = toNum(resp?.body?.code || resp?.body?.status, 0);
-  return { ok: code === 200 || code === 0, code };
+  const body = resp?.body || {};
+  const code = toNum(body?.code || body?.status, 0);
+  if (code !== 200 && code !== 0) {
+    throw new Error(
+      `添加歌曲失败: code=${code}, msg=${toStr(body?.message || body?.msg)}`,
+    );
+  }
+  return { ok: true, code };
 }
 
 // ---- dispatch --------------------------------------------------------------
@@ -337,15 +343,18 @@ async function main() {
 
   try {
     const data = await handler(payload);
-    const ok = process.stdout.write(JSON.stringify({ ok: true, data }) + "\n");
-    if (ok) {
-      process.exit(0);
-    } else {
-      // stdout buffer full — wait for drain before exiting
-      process.stdout.once("drain", () => process.exit(0));
-    }
+    const json = JSON.stringify({ ok: true, data }) + "\n";
+    await new Promise((resolve, reject) => {
+      process.stdout.write(json, (err) => (err ? reject(err) : resolve()));
+    });
+    process.exit(0);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "object" && error !== null
+          ? error.message || JSON.stringify(error)
+          : String(error);
     process.stdout.write(JSON.stringify({ ok: false, error: message }) + "\n");
     process.stderr.write(message + "\n");
     process.exit(1);
