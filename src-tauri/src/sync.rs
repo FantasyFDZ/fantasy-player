@@ -223,13 +223,31 @@ where
         });
     }
 
-    let receipt = netease_api::create_playlist(&playlist_name, &netease_cookie)
-        .map_err(|e| format!("创建网易云歌单失败: {e}"))?;
+    // 3. Find or create target playlist
+    //    If source is QQ's "我喜欢", add to NetEase's existing favorites
+    //    (special_type === 5) instead of creating a new playlist.
+    let is_favorites = playlist_name == "我喜欢";
+    let target_pid = if is_favorites {
+        let ne_user = netease_auth
+            .current_user()
+            .ok_or_else(|| "未登录网易云音乐".to_string())?;
+        let ne_playlists = netease_api::user_playlists(&ne_user.user_id, &netease_cookie, 100)
+            .map_err(|e| format!("获取网易云歌单失败: {e}"))?;
+        ne_playlists
+            .iter()
+            .find(|p| p.special_type == 5)
+            .map(|p| p.id.clone())
+            .ok_or_else(|| "未找到网易云「我喜欢的音乐」歌单".to_string())?
+    } else {
+        let receipt = netease_api::create_playlist(&playlist_name, &netease_cookie)
+            .map_err(|e| format!("创建网易云歌单失败: {e}"))?;
+        receipt.playlist_id
+    };
 
     // 4. Batch add tracks (100 per batch for NetEase)
     for chunk in matched_ids.chunks(100) {
         let ids: Vec<String> = chunk.to_vec();
-        netease_api::add_tracks_to_playlist(&receipt.playlist_id, &ids, &netease_cookie)
+        netease_api::add_tracks_to_playlist(&target_pid, &ids, &netease_cookie)
             .map_err(|e| format!("添加歌曲失败: {e}"))?;
         thread::sleep(SEARCH_INTERVAL);
     }
@@ -335,13 +353,32 @@ where
         });
     }
 
-    let receipt = qqmusic_api::create_playlist(&playlist_name, &qq_cookie)
-        .map_err(|e| format!("创建 QQ 歌单失败: {e}"))?;
+    // 3. Find or create target playlist
+    //    If source is NetEase's favorites (special_type === 5), add to QQ's
+    //    existing "我喜欢" instead of creating a new playlist.
+    let is_favorites = ne_detail.summary.special_type == 5;
+    let target_dirid = if is_favorites {
+        let qq_user = qq_auth
+            .current_user()
+            .ok_or_else(|| "未登录 QQ 音乐".to_string())?;
+        let qq_playlists = qqmusic_api::user_playlists(&qq_user.uin, &qq_cookie)
+            .map_err(|e| format!("获取 QQ 歌单失败: {e}"))?;
+        // QQ's "我喜欢" is typically named "我喜欢" and is the first playlist
+        qq_playlists
+            .iter()
+            .find(|p| p.name == "我喜欢")
+            .map(|p| p.disstid.clone())
+            .ok_or_else(|| "未找到 QQ「我喜欢」歌单".to_string())?
+    } else {
+        let receipt = qqmusic_api::create_playlist(&playlist_name, &qq_cookie)
+            .map_err(|e| format!("创建 QQ 歌单失败: {e}"))?;
+        receipt.dirid
+    };
 
     // 4. Batch add tracks (50 per batch for QQ)
     for chunk in matched_mids.chunks(50) {
         let mids: Vec<String> = chunk.to_vec();
-        qqmusic_api::add_to_playlist(&mids, &receipt.dirid, &qq_cookie)
+        qqmusic_api::add_to_playlist(&mids, &target_dirid, &qq_cookie)
             .map_err(|e| format!("添加歌曲失败: {e}"))?;
         thread::sleep(SEARCH_INTERVAL);
     }
