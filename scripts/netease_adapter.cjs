@@ -273,7 +273,8 @@ async function addTracksToPlaylist({ playlistId, trackIds, cookie = "" }) {
   if (!pid) throw new Error("missing playlistId");
   const ids = pickArray(trackIds);
   if (ids.length === 0) throw new Error("trackIds is empty");
-  const resp = await api.playlist_track_add({
+  const resp = await api.playlist_tracks({
+    op: "add",
     pid,
     tracks: ids.map((id) => toStr(id)).join(","),
     cookie,
