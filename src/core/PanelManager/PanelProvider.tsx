@@ -1,13 +1,8 @@
-// 浮动面板 context —— 多窗口架构版。
+// 面板 context —— 子窗口架构。
 //
-// 面板现在是真正的独立 Tauri WebviewWindow，不再由前端 CSS 绘制浮层。
-// 本 provider 的职责退化为：
-//   - 跟踪哪些面板当前打开（openIds: Set<string>）
-//   - toggle(id) 调用后端 panel_open / panel_close
-//   - 监听后端 melody://panel-closed 事件（用户用 OS chrome 关掉窗口）
-//     同步 openIds 以更新 CabinetControls 按钮高亮
-//
-// PanelProvider 只在主窗口挂载；面板窗口自己不用它。
+// 面板作为主窗口的 child window 弹出在右侧。
+// macOS 上子窗口自动跟随父窗口移动、同层显示。
+// 主窗口完全不变。
 
 import {
   createContext,
@@ -22,7 +17,7 @@ import type { PanelPlugin } from "@/lib/panelTypes";
 
 interface PanelContextValue {
   plugins: PanelPlugin[];
-  openIds: Set<string>;
+  activeId: string | null;
   toggle: (panelId: string) => void;
   close: (panelId: string) => void;
   isOpen: (panelId: string) => boolean;
@@ -36,33 +31,26 @@ interface ProviderProps {
 }
 
 export function PanelProvider({ plugins, children }: ProviderProps) {
-  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
+  const [activeId, setActiveId] = useState<string | null>(null);
 
-  // 启动时从后端拉当前已打开的窗口列表（HMR reload 场景保留状态）
+  // 启动时拉已打开的面板列表
   useEffect(() => {
     let cancelled = false;
     api
       .panelOpenList()
       .then((ids) => {
         if (cancelled) return;
-        setOpenIds(new Set(ids));
+        setActiveId(ids.length > 0 ? ids[0] : null);
       })
       .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  // 监听后端 melody://panel-closed 事件（用户点 OS 窗口 ✕）
+  // 监听面板关闭事件
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     onPanelClosed((panelId) => {
-      setOpenIds((prev) => {
-        if (!prev.has(panelId)) return prev;
-        const next = new Set(prev);
-        next.delete(panelId);
-        return next;
-      });
+      setActiveId((prev) => (prev === panelId ? null : prev));
     }).then((fn) => (unlisten = fn));
     return () => unlisten?.();
   }, []);
@@ -71,19 +59,16 @@ export function PanelProvider({ plugins, children }: ProviderProps) {
     (panelId: string) => {
       const plugin = plugins.find((p) => p.id === panelId);
       if (!plugin) return;
-      setOpenIds((prev) => {
-        if (prev.has(panelId)) {
+      setActiveId((prev) => {
+        if (prev === panelId) {
           api.panelClose(panelId).catch(() => {});
-          const next = new Set(prev);
-          next.delete(panelId);
-          return next;
+          return null;
         }
+        if (prev) api.panelClose(prev).catch(() => {});
         api
           .panelOpen(panelId, plugin.defaultSize, { dockRight: true })
           .catch((err) => console.error("panel_open failed:", err));
-        const next = new Set(prev);
-        next.add(panelId);
-        return next;
+        return panelId;
       });
     },
     [plugins],
@@ -91,22 +76,17 @@ export function PanelProvider({ plugins, children }: ProviderProps) {
 
   const close = useCallback((panelId: string) => {
     api.panelClose(panelId).catch(() => {});
-    setOpenIds((prev) => {
-      if (!prev.has(panelId)) return prev;
-      const next = new Set(prev);
-      next.delete(panelId);
-      return next;
-    });
+    setActiveId((prev) => (prev === panelId ? null : prev));
   }, []);
 
   const isOpen = useCallback(
-    (panelId: string) => openIds.has(panelId),
-    [openIds],
+    (panelId: string) => activeId === panelId,
+    [activeId],
   );
 
   const value = useMemo<PanelContextValue>(
-    () => ({ plugins, openIds, toggle, close, isOpen }),
-    [plugins, openIds, toggle, close, isOpen],
+    () => ({ plugins, activeId, toggle, close, isOpen }),
+    [plugins, activeId, toggle, close, isOpen],
   );
 
   return (

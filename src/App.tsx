@@ -22,6 +22,7 @@ import { SearchPanel } from "@/components/SearchPanel";
 import { LoginPanel } from "@/components/LoginPanel";
 import { BrandMenu } from "@/components/BrandMenu";
 import { SidePanelSwitch } from "@/components/SidePanelSwitch";
+import { useQueuePreAnalyze } from "@/hooks/useQueuePreAnalyze";
 import { PANEL_PLUGINS } from "@/plugins";
 import {
   api,
@@ -56,8 +57,8 @@ function Shell() {
   const [playing, setPlaying] = useState(false);
   const [overlay, setOverlay] = useState<Overlay>("none");
 
-  // 窗口默认尺寸 1050×700 + minWidth/minHeight 同值锁定，
-  // 见 tauri.conf.json —— 可以向上放大，不能缩小到 1050×700 以下。
+  // 队列预分析：后台提前提取音频特征，播放时只需等 LLM 文字生成
+  useQueuePreAnalyze();
 
   useEffect(() => {
     api.session().then((session) => {
@@ -90,86 +91,69 @@ function Shell() {
     <div className="relative flex h-screen flex-col overflow-hidden">
       {/* 顶部栏 */}
       <header
-        className="relative flex items-center justify-between px-8 py-3"
-        style={{ zIndex: 20 }}
-        data-tauri-drag-region
-      >
-        <div style={{ pointerEvents: "auto" }}>
-          <BrandMenu />
-        </div>
-        <div
-          className="flex items-center gap-4"
-          style={{ pointerEvents: "auto" }}
+          className="relative flex items-center justify-between px-8 py-3"
+          style={{ zIndex: 20 }}
+          data-tauri-drag-region
         >
-          <HeaderButton
-            active={overlay === "search"}
-            onClick={() =>
-              setOverlay((o) => (o === "search" ? "none" : "search"))
-            }
-            label="搜索"
-          />
-          <HeaderButton
-            active={overlay === "account"}
-            onClick={() =>
-              setOverlay((o) => (o === "account" ? "none" : "account"))
-            }
-            label={user ? user.nickname : "登录"}
-          />
-        </div>
-      </header>
-
-      {/* scene —— 整个主舞台 */}
-      <main
-        className="relative flex-1 overflow-hidden"
-        style={{
-          // 左右对称小 padding：gramophone 保持在自然左位，
-          // 内容整体不偏移。只有 lyrics 子元素靠右。
-          padding: "20px 20px 20px 20px",
-        }}
-      >
-        {/* 光线层 */}
-        <LightLayer />
-
-        {/* 内容：gramophone 固定左位；lyrics 绝对定位到中线右侧 240px
-            —— 强制独立布局，不再依赖 flex 自动分配 */}
-        <div className="relative h-full" style={{ zIndex: 3 }}>
-          {/* 所有位置均基于 1290px 基准，换算为 vw 比例，
-              保证窗口缩放时整体同步等比移动。
-              基准（vw=1290）：
-                gramophone 窗口 x = 200 → 15.504vw
-                lyrics     窗口 x = 750 → 58.140vw
-                lyrics 宽度        = 480 → 37.209vw
-              减去 main 的 padding-left 20px 得到容器内偏移。*/}
-          <div
-            className="absolute flex items-center"
-            style={{
-              // 13.599vw - 1.905vw (= -20px at 1050) = 11.694vw
-              left: "calc(11.694vw - 20px)",
-              top: 0,
-              bottom: 0,
-            }}
-          >
-            <Gramophone coverUrl={currentSong?.cover_url} playing={playing} />
+          <div style={{ pointerEvents: "auto" }}>
+            <BrandMenu />
           </div>
           <div
-            className="absolute flex flex-col"
-            style={{
-              // 60.045vw - 1.905vw (= -20px at 1050) = 58.140vw
-              left: "calc(60.045vw - 20px)",
-              width: "37.209vw",
-              top: 0,
-              bottom: 0,
-            }}
+            className="flex items-center gap-4"
+            style={{ pointerEvents: "auto" }}
           >
-            <Lyrics song={currentSong} />
+            <HeaderButton
+              active={overlay === "search"}
+              onClick={() =>
+                setOverlay((o) => (o === "search" ? "none" : "search"))
+              }
+              label="搜索"
+            />
+            <HeaderButton
+              active={overlay === "account"}
+              onClick={() =>
+                setOverlay((o) => (o === "account" ? "none" : "account"))
+              }
+              label={user ? user.nickname : "登录"}
+            />
           </div>
-        </div>
-      </main>
+        </header>
 
-      {/* PlayBar —— root flex 子节点，保证全窗口宽度 */}
-      <PlayBar currentSong={currentSong} onSongChange={setCurrentSong} />
+        {/* scene —— 整个主舞台 */}
+        <main
+          className="relative flex-1 overflow-hidden"
+          style={{ padding: "20px 20px 20px 20px" }}
+        >
+          <LightLayer />
+          <div className="relative h-full" style={{ zIndex: 3 }}>
+            <div
+              className="absolute flex items-center"
+              style={{
+                left: "calc(11.694% - 20px)",
+                top: 0,
+                bottom: 0,
+              }}
+            >
+              <Gramophone coverUrl={currentSong?.cover_url} playing={playing} />
+            </div>
+            <div
+              className="absolute flex flex-col"
+              style={{
+                left: "calc(60.045% - 20px)",
+                width: "37.209%",
+                top: 0,
+                bottom: 0,
+              }}
+            >
+              <Lyrics song={currentSong} />
+            </div>
+          </div>
+        </main>
 
-      {/* 主窗口右边缘的展开开关 —— 打开分析面板（吸附到右边） */}
+        {/* PlayBar */}
+        <PlayBar currentSong={currentSong} onSongChange={setCurrentSong} />
+
+      {/* 面板切换按钮 */}
       <SidePanelSwitch />
 
       {/* overlay */}
@@ -188,6 +172,7 @@ function Shell() {
           )}
         </Overlay>
       )}
+
     </div>
   );
 }

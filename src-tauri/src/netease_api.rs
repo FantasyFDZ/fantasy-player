@@ -264,6 +264,38 @@ pub fn playlist_detail(
     Ok(serde_json::from_value(data)?)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaylistCreateReceipt {
+    pub playlist_id: String,
+    pub playlist_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaylistTrackAddResult {
+    pub ok: bool,
+    pub code: i32,
+}
+
+pub fn create_playlist(name: &str, cookie: &str) -> Result<PlaylistCreateReceipt, NeteaseError> {
+    let data = invoke(
+        "create_playlist",
+        json!({ "name": name, "cookie": cookie }),
+    )?;
+    Ok(serde_json::from_value(data)?)
+}
+
+pub fn add_tracks_to_playlist(
+    playlist_id: &str,
+    track_ids: &[String],
+    cookie: &str,
+) -> Result<PlaylistTrackAddResult, NeteaseError> {
+    let data = invoke(
+        "add_tracks_to_playlist",
+        json!({ "playlistId": playlist_id, "trackIds": track_ids, "cookie": cookie }),
+    )?;
+    Ok(serde_json::from_value(data)?)
+}
+
 pub fn song_comments(
     id: &str,
     cookie: &str,
