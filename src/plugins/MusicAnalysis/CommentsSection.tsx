@@ -50,35 +50,28 @@ export function CommentsSection({ song }: Props) {
   if (!comment) return null;
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col" style={{ gap: 8 }}>
       <div
         style={{
-          fontSize: 9,
-          letterSpacing: "0.18em",
+          fontSize: 14,
+          fontWeight: 500,
           color: "var(--theme-label)",
           filter: "brightness(1.4)",
-          fontFamily: "var(--font-mono)",
-          textTransform: "uppercase",
+          fontFamily: "var(--font-display)",
+          letterSpacing: "0.1em",
         }}
       >
         云抑
       </div>
-      <div
-        style={{
-          padding: "10px 12px",
-          borderRadius: 8,
-          background: "rgba(0,0,0,0.3)",
-          border: "1px solid rgba(0,0,0,0.45)",
-          boxShadow: "inset 0 1px 2px rgba(0,0,0,0.5)",
-        }}
-      >
+      <div>
         <div
           style={{
-            fontSize: 12,
+            fontSize: 13,
             color: "var(--theme-lyrics-next)",
-            lineHeight: 1.8,
+            lineHeight: 1.9,
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
+            letterSpacing: "0.02em",
           }}
         >
           {comment.content}

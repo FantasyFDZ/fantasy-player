@@ -763,3 +763,22 @@ pub async fn analyze_song(
     crate::logger::log("INFO", "分析", &format!("分析完成: {} - {}", song.name, song.artist));
     Ok(result)
 }
+
+/// 手动更新歌曲的 BPM 值 —— 覆盖模型分析结果。
+/// 置信度自动设为 1.0（用户输入 = 最高置信度）。
+#[tauri::command]
+pub async fn update_song_bpm(
+    db: State<'_, Db>,
+    song_id: String,
+    bpm: f64,
+) -> Result<AudioFeatures, String> {
+    if bpm <= 0.0 || bpm > 300.0 {
+        return Err("BPM 必须在 1-300 范围内".into());
+    }
+    db.song_feature_update_bpm(&song_id, bpm)
+        .map_err(|e| e.to_string())?;
+    // 返回更新后的完整 features（让前端刷新 UI）
+    db.song_feature_get(&song_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "更新成功但无法读取".into())
+}

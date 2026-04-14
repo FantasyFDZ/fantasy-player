@@ -1,7 +1,6 @@
 // 所有面板插件的中心注册表。
 
 import type { PanelPlugin } from "@/lib/panelTypes";
-import { AiDj } from "./AiDj/AiDj";
 import { AiPlaylist } from "./AiPlaylist/AiPlaylist";
 import { MusicAnalysis } from "./MusicAnalysis/MusicAnalysis";
 import { PlaylistSync } from "./PlaylistSync/PlaylistSync";
@@ -24,15 +23,6 @@ export const PANEL_PLUGINS: PanelPlugin[] = [
     defaultSize: { w: 440, h: 700 },
     component: AiPlaylist,
     requiredCapabilities: ["llm"],
-  },
-  {
-    id: "ai_dj",
-    name: "AI DJ",
-    icon: "🎛",
-    minSize: { w: 400, h: 550 },
-    defaultSize: { w: 460, h: 750 },
-    component: AiDj,
-    requiredCapabilities: ["llm", "audio-analysis"],
   },
   {
     id: "playlist_sync",

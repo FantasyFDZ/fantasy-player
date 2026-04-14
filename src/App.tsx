@@ -11,6 +11,7 @@
 //   - scene 内部：LightLayer（absolute 全覆盖）+ gramophone + lyrics-panel + playbar
 
 import { useCallback, useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Gramophone } from "@/core/Gramophone/Gramophone";
 import { Lyrics } from "@/core/Lyrics/Lyrics";
 import { ThemeProvider } from "@/core/ThemeProvider/ThemeProvider";
@@ -20,6 +21,7 @@ import { PanelWindow } from "@/core/PanelManager/PanelWindow";
 import { PlayBar } from "@/components/PlayBar";
 import { SearchPanel } from "@/components/SearchPanel";
 import { LoginPanel } from "@/components/LoginPanel";
+import { SettingsPanel } from "@/components/SettingsPanel";
 import { BrandMenu } from "@/components/BrandMenu";
 import { SidePanelSwitch } from "@/components/SidePanelSwitch";
 import { useQueuePreAnalyze } from "@/hooks/useQueuePreAnalyze";
@@ -31,7 +33,7 @@ import {
   type UserProfile,
 } from "@/lib/api";
 
-type Overlay = "none" | "search" | "account";
+type Overlay = "none" | "search" | "account" | "settings";
 
 export default function App() {
   // URL query ?panel=<id> 指定这是一个面板窗口
@@ -87,8 +89,25 @@ function Shell() {
     }
   }, []);
 
+  const handleAddToQueue = useCallback(async (song: Song) => {
+    try {
+      await api.queueAppend(song);
+    } catch (err) {
+      console.error("加入队列失败:", err);
+    }
+  }, []);
+
   return (
-    <div className="relative flex h-screen flex-col overflow-hidden">
+    <div
+      className="relative flex h-screen flex-col overflow-hidden"
+      style={{
+        // 整个主窗口单一背景色，LightLayer 覆盖全窗口保证光效一致
+        background: "var(--theme-bg)",
+      }}
+    >
+      {/* 光线层 —— 提到根层级覆盖整个主窗口（header/main/playbar 全覆盖） */}
+      <LightLayer />
+
       {/* 顶部栏 */}
       <header
           className="relative flex items-center justify-between px-8 py-3"
@@ -116,6 +135,32 @@ function Shell() {
               }
               label={user ? user.nickname : "登录"}
             />
+            {/* 窗口控制：设置 + 最小化 + 关闭 */}
+            <div
+              className="flex items-center"
+              style={{ gap: 4, marginLeft: 8 }}
+            >
+              <WindowButton
+                onClick={() =>
+                  setOverlay((o) => (o === "settings" ? "none" : "settings"))
+                }
+                glyph="⚙"
+                hoverColor="rgba(255,255,255,0.1)"
+                label="模型设置"
+              />
+              <WindowButton
+                onClick={() => getCurrentWindow().minimize()}
+                glyph="−"
+                hoverColor="rgba(255,255,255,0.1)"
+                label="最小化"
+              />
+              <WindowButton
+                onClick={() => getCurrentWindow().close()}
+                glyph="✕"
+                hoverColor="rgba(255, 80, 80, 0.7)"
+                label="关闭"
+              />
+            </div>
           </div>
         </header>
 
@@ -124,7 +169,6 @@ function Shell() {
           className="relative flex-1 overflow-hidden"
           style={{ padding: "20px 20px 20px 20px" }}
         >
-          <LightLayer />
           <div className="relative h-full" style={{ zIndex: 3 }}>
             <div
               className="absolute flex items-center"
@@ -159,7 +203,9 @@ function Shell() {
       {/* overlay */}
       {overlay !== "none" && (
         <Overlay onClose={() => setOverlay("none")}>
-          {overlay === "search" && <SearchPanel onPlay={handlePlay} />}
+          {overlay === "search" && (
+            <SearchPanel onPlay={handlePlay} onAddToQueue={handleAddToQueue} />
+          )}
           {overlay === "account" && (
             <LoginPanel
               user={user}
@@ -170,6 +216,7 @@ function Shell() {
               onLogout={() => setUser(null)}
             />
           )}
+          {overlay === "settings" && <SettingsPanel />}
         </Overlay>
       )}
 
@@ -206,6 +253,47 @@ function HeaderButton({
       }}
     >
       {label}
+    </button>
+  );
+}
+
+function WindowButton({
+  onClick,
+  glyph,
+  hoverColor,
+  label,
+}: {
+  onClick: () => void;
+  glyph: string;
+  hoverColor: string;
+  label: string;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      title={label}
+      className="transition-all"
+      style={{
+        width: 28,
+        height: 22,
+        borderRadius: 4,
+        background: hovered ? hoverColor : "transparent",
+        border: "none",
+        color: hovered && glyph === "✕" ? "#fff" : "var(--theme-text-muted)",
+        fontSize: 13,
+        lineHeight: 1,
+        cursor: "pointer",
+        padding: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      {glyph}
     </button>
   );
 }

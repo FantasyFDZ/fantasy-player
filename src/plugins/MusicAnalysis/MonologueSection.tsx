@@ -15,9 +15,11 @@ import { log } from "@/lib/logger";
 
 interface Props {
   song: Song | null;
+  /** 外部递增此值可强制重新生成（用于刷新按钮） */
+  refreshKey?: number;
 }
 
-export function MonologueSection({ song }: Props) {
+export function MonologueSection({ song, refreshKey = 0 }: Props) {
   const { features, loading: featuresLoading, error: featuresError, songId: featuresSongId } =
     useAudioFeatures(song);
   const { provider, model, loading: providerLoading } = useActiveProvider();
@@ -60,11 +62,12 @@ export function MonologueSection({ song }: Props) {
   // 幂等去重：同一 (song, provider, model) 组合只发一次
   const lastKeyRef = useRef<string>("");
 
-  // 切歌时显式清空 dedup key —— 防止 HMR / fast refresh 把 ref 跨歌带飞
+  // 切歌或外部触发刷新时清空 dedup key
   useEffect(() => {
     lastKeyRef.current = "";
     setHasRequested(false);
-  }, [song?.id]);
+    reset();
+  }, [song?.id, refreshKey, reset]);
 
   useEffect(() => {
     if (providerLoading || featuresLoading) return;
@@ -135,6 +138,7 @@ export function MonologueSection({ song }: Props) {
     model,
     providerLoading,
     lyricReady,
+    refreshKey,
   ]);
 
   return (
@@ -156,9 +160,6 @@ export function MonologueSection({ song }: Props) {
     </div>
   );
 }
-
-// 导出 MetricsStrip 供 MusicAnalysis.tsx 在最底部使用
-export { MetricsStrip };
 
 // ---- prompt 构造 --------------------------------------------------------
 //
@@ -417,122 +418,3 @@ function AiTextDisplay(props: DisplayProps) {
   return <div style={bodyStyle}>{body}</div>;
 }
 
-// ---- 底部紧凑指标行 -----------------------------------------------------
-
-function MetricsStrip({ features }: { features: AudioFeatures }) {
-  // 风格栏：优先用 Tier 3 genre_tags 的 top1，其次用 mood_tags 的 top1，
-  // 最后回退到根据 danceability + 调式给一个粗略标签
-  const styleLabel = pickStyleLabel(features);
-  const items: Array<{ label: string; value: string; flex: number; size: number }> = [
-    { label: "风格", value: styleLabel, flex: 1.5, size: 12 },
-    { label: "BPM", value: features.bpm.toFixed(0), flex: 1, size: 15 },
-    { label: "Key", value: features.key || "—", flex: 1, size: 15 },
-    { label: "能量", value: `${Math.round(features.energy * 100)}%`, flex: 1, size: 15 },
-    { label: "情绪", value: `${Math.round(features.valence * 100)}%`, flex: 1, size: 15 },
-  ];
-  return (
-    <div
-      className="flex items-center justify-between"
-      style={{
-        marginTop: 14,
-        paddingTop: 10,
-        borderTop: "1px solid rgba(255,255,255,0.08)",
-        gap: 4,
-      }}
-    >
-      {items.map((it) => (
-        <div
-          key={it.label}
-          className="flex flex-col items-center"
-          style={{ flex: it.flex, minWidth: 0 }}
-        >
-          <span
-            style={{
-              fontSize: 9,
-              letterSpacing: "0.18em",
-              textTransform: "uppercase",
-              color: "var(--theme-lyrics-mid)",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            {it.label}
-          </span>
-          <span
-            className="font-display"
-            style={{
-              fontSize: it.size,
-              fontWeight: 500,
-              color: "var(--theme-lyrics-next)",
-              marginTop: 2,
-              lineHeight: 1.1,
-              maxWidth: "100%",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              textAlign: "center",
-            }}
-            title={it.value}
-          >
-            {it.value}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/**
- * 风格栏的标签来源：
- *  1) Tier 4 LLM 给出的具体风格（最准，比如 city pop / dream pop）
- *  2) Tier 3 genre_tags top1（essentia TF 模型，400 类细分）
- *  3) Tier 3 mood_tags top1
- *  4) Tier 2 启发式（danceability + 调式 + 能量）
- *  5) "—"
- */
-function pickStyleLabel(f: AudioFeatures): string {
-  if (
-    f.llm_genre &&
-    f.llm_genre_confidence &&
-    f.llm_genre_confidence !== "unknown" &&
-    f.llm_genre_confidence !== "low"
-  ) {
-    return shortenStyle(f.llm_genre);
-  }
-  if (f.genre_tags && f.genre_tags.length > 0) {
-    return shortenStyle(f.genre_tags[0]);
-  }
-  if (f.mood_tags && f.mood_tags.length > 0) {
-    return moodTagToZh(f.mood_tags[0]);
-  }
-  // 启发式回退：基于已有的 Tier 2 字段
-  const isMinor = f.key.endsWith("m");
-  const dance = typeof f.danceability === "number" ? f.danceability : null;
-  if (dance !== null && dance > 1.8 && f.energy > 0.55) {
-    return isMinor ? "暗黑舞曲" : "舞曲";
-  }
-  if (f.energy < 0.3 && (dance === null || dance < 1.2)) {
-    return isMinor ? "民谣抒情" : "轻音乐";
-  }
-  if (f.bpm < 80 && isMinor) return "慢歌抒情";
-  if (f.bpm > 130 && f.energy > 0.6) return "动感流行";
-  return isMinor ? "小调流行" : "流行";
-}
-
-function shortenStyle(raw: string): string {
-  // genre_discogs400 标签形如 "Electronic---House" / "Rock---Indie Rock"
-  const tail = raw.split("---").pop() ?? raw;
-  return tail.length > 8 ? tail.slice(0, 8) + "…" : tail;
-}
-
-function moodTagToZh(tag: string): string {
-  const map: Record<string, string> = {
-    happy: "愉悦",
-    sad: "忧伤",
-    aggressive: "激烈",
-    relaxed: "松弛",
-    acoustic: "原声",
-    electronic: "电子",
-    party: "派对",
-  };
-  return map[tag] ?? tag;
-}

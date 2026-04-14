@@ -676,6 +676,28 @@ impl Db {
         )?;
         Ok(())
     }
+
+    /// 手动覆盖 BPM —— 用户在前端可点击 BPM 值修正。
+    /// 同时把 bpm_confidence 设为 1.0（用户手动输入 = 最高置信度）。
+    pub fn song_feature_update_bpm(
+        &self,
+        song_id: &str,
+        bpm: f64,
+    ) -> Result<(), crate::db::DbError> {
+        let conn = self.conn_lock();
+        let affected = conn.execute(
+            "UPDATE song_features
+                SET bpm = ?1, bpm_confidence = 1.0
+              WHERE song_id = ?2",
+            rusqlite::params![bpm, song_id],
+        )?;
+        if affected == 0 {
+            return Err(crate::db::DbError::Other(format!(
+                "song_features 没有该歌曲: {song_id}"
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// 把 extra_json 里反序列化出来的 Value 字段合并回 AudioFeatures。

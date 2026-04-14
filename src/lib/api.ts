@@ -405,6 +405,9 @@ export const api = {
   async analyzeSong(song: Song) {
     return invoke<AudioFeatures>("analyze_song", { song });
   },
+  async updateSongBpm(songId: string, bpm: number) {
+    return invoke<AudioFeatures>("update_song_bpm", { songId, bpm });
+  },
 
   // ---- Panel layout ----
   async panelLayoutList() {

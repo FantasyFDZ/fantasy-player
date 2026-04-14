@@ -90,6 +90,7 @@ pub fn run() {
             commands::llm_request,
             commands::llm_stream,
             commands::analyze_song,
+            commands::update_song_bpm,
             commands::qq_auth_session,
             commands::qq_auth_login_cookie,
             commands::qq_auth_refresh,

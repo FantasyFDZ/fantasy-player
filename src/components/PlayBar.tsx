@@ -101,9 +101,8 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
         padding: "10px 30px",
         gap: "14px",
         zIndex: 5,
-        background: "var(--theme-playbar-bg)",
-        backdropFilter: "blur(10px)",
-        WebkitBackdropFilter: "blur(10px)",
+        // 背景透明，让主窗口整体渐变透出（顶底统一色彩）
+        background: "transparent",
       }}
     >
       {/* 时间 · 进度条 · 时间 */}
