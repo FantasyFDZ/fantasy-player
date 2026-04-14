@@ -5,6 +5,7 @@ pub mod auth;
 pub mod commands;
 pub mod db;
 pub mod llm_client;
+pub mod logger;
 pub mod netease_api;
 pub mod player;
 pub mod qq_auth;
@@ -52,6 +53,7 @@ pub fn run() {
         .manage(db)
         .manage(llm)
         .invoke_handler(tauri::generate_handler![
+            commands::write_log,
             commands::auth_session,
             commands::auth_qr_start,
             commands::auth_qr_check,

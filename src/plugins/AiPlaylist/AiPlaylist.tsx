@@ -14,6 +14,7 @@ import { useActiveProvider } from "@/hooks/useActiveProvider";
 import { useLLM } from "@/hooks/useLLM";
 import { api, type Song } from "@/lib/api";
 import { extractJsonArray } from "@/lib/extractJsonArray";
+import { log } from "@/lib/logger";
 
 // ---- types ----------------------------------------------------------------
 
@@ -187,6 +188,7 @@ export function AiPlaylist(_props: Props) {
     ];
 
     try {
+      log("AI选歌", `用户消息: ${text.slice(0, 80)}${text.length > 80 ? "..." : ""}`);
       const resp = await stream({
         provider_id: provider.id,
         model,
@@ -198,6 +200,7 @@ export function AiPlaylist(_props: Props) {
       // 流结束，解析推荐并追加 assistant 消息
       const finalContent = resp?.content ?? "";
       const { recs, matched } = parseRecommendations(finalContent);
+      log("AI选歌", `LLM 响应: 推荐 ${recs.length} 首, 匹配 ${matched.length} 首`);
       const assistantMsg: ChatMessage = {
         role: "assistant",
         text: finalContent,
@@ -208,6 +211,7 @@ export function AiPlaylist(_props: Props) {
     } catch (err) {
       const errMsg =
         err instanceof Error ? err.message : String(err);
+      log("AI选歌", `LLM 失败: ${errMsg.slice(0, 80)}`, "ERROR");
       setMessages((prev) => [
         ...prev,
         { role: "assistant", text: `请求失败：${errMsg}` },

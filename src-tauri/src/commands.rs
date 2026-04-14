@@ -19,6 +19,14 @@ use crate::qqmusic_api::{self, QQPlaylist, QQPlaylistDetail};
 use crate::queue::{PlayMode, QueueSnapshot, QueueState};
 use crate::sync::{self, SyncProgress, SyncReport, SyncSource, SyncTarget};
 
+// ---- logging ---------------------------------------------------------------
+
+#[tauri::command]
+pub async fn write_log(level: String, module: String, message: String) -> Result<(), String> {
+    crate::logger::log(&level, &module, &message);
+    Ok(())
+}
+
 // ---- auth ------------------------------------------------------------------
 
 #[tauri::command]
@@ -189,17 +197,20 @@ pub async fn play_song(
         return Err("未能获取歌曲播放链接（可能需要登录或 VIP）".into());
     }
     player.load_url(&url.url).map_err(|e| e.to_string())?;
+    crate::logger::log("INFO", "播放", &format!("播放歌曲: {} - {}", song.name, song.artist));
     let _ = app.emit("melody://song-changed", &song);
     Ok(player.status())
 }
 
 #[tauri::command]
 pub async fn pause(player: State<'_, PlayerState>) -> Result<(), String> {
+    crate::logger::log("INFO", "播放", "暂停");
     player.pause().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn resume(player: State<'_, PlayerState>) -> Result<(), String> {
+    crate::logger::log("INFO", "播放", "继续播放");
     player.resume().map_err(|e| e.to_string())
 }
 
@@ -215,6 +226,7 @@ pub async fn set_volume(player: State<'_, PlayerState>, volume: f64) -> Result<(
 
 #[tauri::command]
 pub async fn stop(player: State<'_, PlayerState>) -> Result<(), String> {
+    crate::logger::log("INFO", "播放", "停止");
     player.stop().map_err(|e| e.to_string())
 }
 
@@ -286,6 +298,7 @@ pub async fn next_track(
         return Ok(None);
     };
     play_current(app, auth, player, song.clone()).await?;
+    crate::logger::log("INFO", "播放", &format!("下一首: {} - {}", song.name, song.artist));
     Ok(Some(song))
 }
 
@@ -300,6 +313,7 @@ pub async fn prev_track(
         return Ok(None);
     };
     play_current(app, auth, player, song.clone()).await?;
+    crate::logger::log("INFO", "播放", &format!("上一首: {} - {}", song.name, song.artist));
     Ok(Some(song))
 }
 
@@ -577,10 +591,15 @@ pub async fn qq_auth_login_cookie(
     cookie: String,
 ) -> Result<QQUserProfile, String> {
     let qq_auth = qq_auth.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || qq_auth.login_with_cookie(&cookie))
+    let result = tauri::async_runtime::spawn_blocking(move || qq_auth.login_with_cookie(&cookie))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            crate::logger::log("ERROR", "QQ认证", &format!("Cookie 登录失败: {}", e));
+            e.to_string()
+        })?;
+    crate::logger::log("INFO", "QQ认证", &format!("Cookie 登录成功: {}", result.nickname));
+    Ok(result)
 }
 
 #[tauri::command]
@@ -596,6 +615,7 @@ pub async fn qq_auth_refresh(
 
 #[tauri::command]
 pub async fn qq_auth_logout(qq_auth: State<'_, QQAuthState>) -> Result<(), String> {
+    crate::logger::log("INFO", "QQ认证", "登出");
     let qq_auth = qq_auth.inner().clone();
     tauri::async_runtime::spawn_blocking(move || qq_auth.logout())
         .await
@@ -646,6 +666,11 @@ pub async fn sync_playlists(
     target: SyncTarget,
     playlist_ids: Vec<String>,
 ) -> Result<Vec<SyncReport>, String> {
+    crate::logger::log(
+        "INFO",
+        "同步",
+        &format!("开始同步: {:?} -> {:?}, {} 个歌单", source, target, playlist_ids.len()),
+    );
     let auth = auth.inner().clone();
     let qq_auth = qq_auth.inner().clone();
     let app_handle = app.clone();
@@ -684,8 +709,10 @@ pub async fn analyze_song(
 ) -> Result<AudioFeatures, String> {
     // 缓存命中直接返回
     if let Some(cached) = db.song_feature_get(&song.id).map_err(|e| e.to_string())? {
+        crate::logger::log("INFO", "分析", &format!("缓存命中: {} - {}", song.name, song.artist));
         return Ok(cached);
     }
+    crate::logger::log("INFO", "分析", &format!("开始分析: {} - {}", song.name, song.artist));
 
     // 将歌曲元数据写入 songs 表（满足 song_features 的 FK 约束）
     db.song_upsert(
@@ -718,7 +745,7 @@ pub async fn analyze_song(
     let song_id_for_call = song.id.clone();
     let song_name_for_call = song.name.clone();
     let song_artist_for_call = song.artist.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         audio_analyzer::analyze_song_blocking(
             &db_for_call,
             &song_id_for_call,
@@ -729,5 +756,10 @@ pub async fn analyze_song(
     })
     .await
     .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
+    .map_err(|e| {
+        crate::logger::log("ERROR", "分析", &format!("分析失败: {} - {} | {}", song.name, song.artist, e));
+        e.to_string()
+    })?;
+    crate::logger::log("INFO", "分析", &format!("分析完成: {} - {}", song.name, song.artist));
+    Ok(result)
 }

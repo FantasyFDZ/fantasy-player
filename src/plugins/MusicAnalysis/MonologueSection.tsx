@@ -11,6 +11,7 @@ import { useActiveProvider } from "@/hooks/useActiveProvider";
 import { useAudioFeatures } from "@/hooks/useAudioFeatures";
 import { useLLM } from "@/hooks/useLLM";
 import { api, type AudioFeatures, type Song } from "@/lib/api";
+import { log } from "@/lib/logger";
 
 interface Props {
   song: Song | null;
@@ -89,9 +90,9 @@ export function MonologueSection({ song }: Props) {
       console.error("[MonologueSection] buildPrompt failed:", err);
       return;
     }
-
     reset();
     setHasRequested(true);
+    log("独白", `LLM 请求: ${song.name} - ${song.artist} | ${provider.id} / ${model}`);
     // 用 stream 而不是 request：token 会逐字流入 UI，
     // 让用户立刻看到"在生成"，避免本地慢模型让人误以为卡住。
     stream({
@@ -114,8 +115,12 @@ export function MonologueSection({ song }: Props) {
       ],
       temperature: 0.85,
       max_tokens: 800,
+    }).then((resp) => {
+      const text = resp?.content ?? "";
+      log("独白", `LLM 响应: ${text.slice(0, 50)}${text.length > 50 ? "..." : ""}`);
     }).catch((err) => {
       console.error("[MonologueSection] llm stream failed:", err);
+      log("独白", `LLM 失败: ${String(err).slice(0, 80)}`, "ERROR");
       // 注意：失败时不要清 lastKeyRef —— 否则若失败原因是持续性的
       // （比如本地模型崩了），useEffect 重跑时会无限重试，
       // 用户的本地模型就会被反复轰炸。
