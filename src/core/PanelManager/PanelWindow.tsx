@@ -27,14 +27,26 @@ export function PanelWindow({ panelId }: Props) {
 
   // 启动时拉当前歌 + 订阅变化。
   //
-  // 跨窗口事件传递在某些 Tauri 版本上不完全可靠，所以用两条路线：
+  // 跨窗口事件传递在某些 Tauri 版本上不完全可靠 —— 两次快切歌时
+  // 面板可能只收到其中一次，于是组合了三条路线：
   //   1. 主路线：melody://song-changed 事件（后端切歌时广播 Song）
-  //   2. 兜底：melody://playback-update 每 ~400ms 触发一次，
-  //      节流到 1.5 秒调一次 queueSnapshot 检查 id 是否变化
+  //   2. 兜底：melody://playback-update（后端 ~400ms 一次）触发 snapshot
+  //      —— 节流到 500ms 一次
+  //   3. 保险：1s 定时轮询 queueSnapshot，保证最终一致
+  //
+  // 同时：收到 song-changed 后 250ms 再调一次 snapshot，专门对付
+  //      「两次 next_track 在同一事件循环里发射」的竞争场景。
   useEffect(() => {
     let cancelled = false;
     let lastKnownId: string | null = null;
     let lastCheckTs = 0;
+
+    const applySong = (next: Song | null) => {
+      const nextId = next?.id ?? null;
+      if (nextId === lastKnownId) return;
+      lastKnownId = nextId;
+      setSong(next);
+    };
 
     const refreshFromSnapshot = async () => {
       try {
@@ -44,11 +56,7 @@ export function PanelWindow({ panelId }: Props) {
           snap.current_index !== null
             ? (snap.tracks[snap.current_index] ?? null)
             : null;
-        const nextId = next?.id ?? null;
-        if (nextId !== lastKnownId) {
-          lastKnownId = nextId;
-          setSong(next);
-        }
+        applySong(next);
       } catch {
         /* ignore */
       }
@@ -61,25 +69,35 @@ export function PanelWindow({ panelId }: Props) {
     // 主路线
     onSongChanged((s) => {
       if (cancelled) return;
-      lastKnownId = s.id;
-      setSong(s);
+      applySong(s);
+      // 250ms 后再拉一次 snapshot —— 如果刚才是 pair 切歌的第一次，
+      // 这会把 UI 拉到真正的当前歌。
+      window.setTimeout(() => {
+        if (!cancelled) refreshFromSnapshot();
+      }, 250);
     })
       .then((fn) => listeners.push(fn))
       .catch(() => {});
 
-    // 兜底
+    // 兜底一：playback-update 节流
     onPlaybackUpdate(() => {
       if (cancelled) return;
       const now = Date.now();
-      if (now - lastCheckTs < 1500) return;
+      if (now - lastCheckTs < 500) return;
       lastCheckTs = now;
       refreshFromSnapshot();
     })
       .then((fn) => listeners.push(fn))
       .catch(() => {});
 
+    // 兜底二：无条件定时轮询，保证最终一致
+    const pollTimer = window.setInterval(() => {
+      if (!cancelled) refreshFromSnapshot();
+    }, 1000);
+
     return () => {
       cancelled = true;
+      window.clearInterval(pollTimer);
       listeners.forEach((fn) => fn());
     };
   }, []);

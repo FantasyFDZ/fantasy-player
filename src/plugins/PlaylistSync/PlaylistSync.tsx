@@ -1,7 +1,9 @@
-// 歌单迁移面板 —— QQ 音乐 ↔ 网易云音乐
+// 歌单迁移 —— QQ 音乐 ↔ 网易云音乐
 //
 // 状态机：Idle → Login → SelectPlaylists → Syncing → Report
 // QQ 登录采用 cookie 粘贴模式（QR 不可用）。
+//
+// 现在作为 SettingsPanel 内部的一个 tab 渲染（不再是独立面板）。
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -11,7 +13,6 @@ import {
   type QQSession,
   type QQUserProfile,
   type Session,
-  type Song,
   type SyncProgress,
   type SyncReport,
   type SyncSource,
@@ -23,15 +24,9 @@ import {
 type Phase = "idle" | "login" | "select" | "syncing" | "report";
 type Direction = "qq_to_netease" | "netease_to_qq";
 
-// ---- props (PanelProps) ---------------------------------------------------
-
-interface Props {
-  song: Song | null;
-}
-
 // ---- component ------------------------------------------------------------
 
-export function PlaylistSync(_props: Props) {
+export function PlaylistSync() {
   // -- auth state --
   const [neteaseSession, setNeteaseSession] = useState<Session | null>(null);
   const [qqSession, setQqSession] = useState<QQSession | null>(null);

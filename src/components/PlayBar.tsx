@@ -8,7 +8,7 @@
 //   - 主题色驱动（--theme-playbar-*）
 //   - 半透明毛玻璃背景
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   onPlaybackUpdate,
@@ -34,6 +34,28 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
   const [mode, setMode] = useState<PlayMode>("sequential");
   const [volOpen, setVolOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
+  // 包含 popup + 触发按钮 —— 用来判定"点击外部关闭"
+  const queueWrapperRef = useRef<HTMLDivElement>(null);
+
+  // queue popup 的点击外部关闭：判定对象是 button+popup 的共同父容器，
+  // 这样点按钮自身不会被当成"外部"（避免 close 和 toggle 相互抵消）。
+  useEffect(() => {
+    if (!queueOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!queueWrapperRef.current?.contains(e.target as Node)) {
+        setQueueOpen(false);
+      }
+    };
+    // 延后一 tick，避免开启的那次点击立刻被判为"外部"
+    const timer = window.setTimeout(
+      () => document.addEventListener("mousedown", onDown),
+      0,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [queueOpen]);
 
   useEffect(() => {
     let unlistenUpdate: (() => void) | undefined;
@@ -168,11 +190,11 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
       </button>
 
       {/* 右侧：歌曲信息按钮 + 队列 popup */}
-      <div className="relative">
+      <div className="relative" ref={queueWrapperRef}>
         <QueuePopup
           open={queueOpen}
-          onClose={() => setQueueOpen(false)}
           onJump={jumpToQueueSong}
+          onAfterClear={() => setQueueOpen(false)}
         />
         <SongInfoButton
           song={currentSong}
@@ -208,27 +230,85 @@ function ProgressBar({
   value: number;
   onSeek: (pct: number) => void;
 }) {
+  const barRef = useRef<HTMLDivElement>(null);
+  // 拖拽中的"本地进度"（0-100），覆盖 value 使滑动时进度条跟随鼠标；
+  // 松手后清空，交还给来自后端的 value。
+  const [dragValue, setDragValue] = useState<number | null>(null);
+  const dragging = dragValue !== null;
+  const displayValue = dragValue ?? value;
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!barRef.current) return;
+    e.preventDefault();
+    const rect = barRef.current.getBoundingClientRect();
+    const computePct = (clientX: number) =>
+      Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+
+    setDragValue(computePct(e.clientX) * 100);
+
+    const onMove = (ev: MouseEvent) => {
+      setDragValue(computePct(ev.clientX) * 100);
+    };
+    const onUp = (ev: MouseEvent) => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      const finalPct = computePct(ev.clientX);
+      setDragValue(null);
+      onSeek(finalPct);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
   return (
     <div
-      className="relative flex-1 cursor-pointer"
+      ref={barRef}
+      className="group relative flex-1"
       style={{
-        height: "2px",
-        borderRadius: "1px",
-        overflow: "hidden",
-        background: "var(--theme-playbar-progress-track)",
+        height: "12px",
+        display: "flex",
+        alignItems: "center",
+        cursor: "pointer",
+        userSelect: "none",
       }}
-      onClick={(e) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        onSeek((e.clientX - rect.left) / rect.width);
-      }}
+      onMouseDown={handleMouseDown}
     >
+      {/* 轨道 */}
       <div
         style={{
-          width: `${value}%`,
-          height: "100%",
-          background: "var(--theme-playbar-progress-fill)",
+          position: "relative",
+          width: "100%",
+          height: "2px",
           borderRadius: "1px",
-          transition: "width 150ms linear",
+          background: "var(--theme-playbar-progress-track)",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: `${displayValue}%`,
+            height: "100%",
+            background: "var(--theme-playbar-progress-fill)",
+            borderRadius: "1px",
+            transition: dragging ? "none" : "width 150ms linear",
+          }}
+        />
+      </div>
+      {/* 拖拽小球：hover / 拖拽时显示 */}
+      <div
+        className="pointer-events-none group-hover:opacity-100"
+        style={{
+          position: "absolute",
+          left: `${displayValue}%`,
+          top: "50%",
+          transform: "translate(-50%, -50%)",
+          width: "10px",
+          height: "10px",
+          borderRadius: "50%",
+          background: "var(--theme-playbar-progress-fill)",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.5)",
+          opacity: dragging ? 1 : 0,
+          transition: dragging ? "none" : "opacity 120ms ease, left 150ms linear",
         }}
       />
     </div>

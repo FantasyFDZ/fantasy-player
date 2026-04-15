@@ -32,6 +32,13 @@ export function MonologueSection({ song, refreshKey = 0 }: Props) {
   // "还没开始" vs "已完成但模型返回空 content" 两种 UI 状态
   const [hasRequested, setHasRequested] = useState(false);
 
+  // 始终跟随 song.id 的 ref —— 用于在 stream() 回调里检查
+  // 响应到达时 song 是否还是当初发起请求的那一首。
+  const currentSongIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    currentSongIdRef.current = song?.id ?? null;
+  }, [song?.id]);
+
   // 获取歌词 —— lyricReady 门禁保证 LLM 只在歌词请求结束后触发一次
   useEffect(() => {
     if (!song) {
@@ -95,7 +102,10 @@ export function MonologueSection({ song, refreshKey = 0 }: Props) {
     }
     reset();
     setHasRequested(true);
-    log("独白", `LLM 请求: ${song.name} - ${song.artist} | ${provider.id} / ${model}`);
+    // 锁死本次请求的目标 —— 之后回调里用这些来判断是否仍是当前歌
+    const requestedSongId = song.id;
+    const requestedLabel = `${song.name} - ${song.artist}`;
+    log("独白", `LLM 请求: ${requestedLabel} | ${provider.id} / ${model}`);
     // 用 stream 而不是 request：token 会逐字流入 UI，
     // 让用户立刻看到"在生成"，避免本地慢模型让人误以为卡住。
     stream({
@@ -107,7 +117,7 @@ export function MonologueSection({ song, refreshKey = 0 }: Props) {
           content:
             "基于我提供的歌曲信息、音频特征和部分歌词，" +
             "写一段充满意境和故事感的乐评。" +
-            "80-120 字，分 2-3 段，克制用「我」。\n\n" +
+            "80-120 字，分 2-3 段,克制用「我」。\n\n" +
             "禁止：提歌手名、复述歌名、报数字/术语/和弦、" +
             "引号星号列表标题、超过 120 字。",
         },
@@ -119,10 +129,24 @@ export function MonologueSection({ song, refreshKey = 0 }: Props) {
       temperature: 0.85,
       max_tokens: 800,
     }).then((resp) => {
+      // 响应到达时 song 已经换了 —— useLLM 内部已经把过期结果扔掉，
+      // 这里只负责日志别误导。切歌时 reset effect 会在主 effect 前
+      // 清掉 lastKeyRef，新歌的请求会自然发起，不需要这里再兜。
+      if (currentSongIdRef.current !== requestedSongId) {
+        log(
+          "独白",
+          `丢弃过期响应: ${requestedLabel} (当前歌已切到 ${currentSongIdRef.current ?? "null"})`,
+        );
+        return;
+      }
       const text = resp?.content ?? "";
       log("独白", `LLM 响应: ${text.slice(0, 50)}${text.length > 50 ? "..." : ""}`);
     }).catch((err) => {
       console.error("[MonologueSection] llm stream failed:", err);
+      if (currentSongIdRef.current !== requestedSongId) {
+        log("独白", `过期请求失败（已忽略）: ${requestedLabel}`);
+        return;
+      }
       log("独白", `LLM 失败: ${String(err).slice(0, 80)}`, "ERROR");
       // 注意：失败时不要清 lastKeyRef —— 否则若失败原因是持续性的
       // （比如本地模型崩了），useEffect 重跑时会无限重试，

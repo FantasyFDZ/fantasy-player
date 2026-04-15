@@ -20,6 +20,7 @@ import { PanelProvider } from "@/core/PanelManager/PanelProvider";
 import { PanelWindow } from "@/core/PanelManager/PanelWindow";
 import { PlayBar } from "@/components/PlayBar";
 import { SearchPanel } from "@/components/SearchPanel";
+import { PlaylistPanel } from "@/components/PlaylistPanel";
 import { LoginPanel } from "@/components/LoginPanel";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { BrandMenu } from "@/components/BrandMenu";
@@ -33,7 +34,7 @@ import {
   type UserProfile,
 } from "@/lib/api";
 
-type Overlay = "none" | "search" | "account" | "settings";
+type Overlay = "none" | "playlist" | "search" | "account" | "settings";
 
 export default function App() {
   // URL query ?panel=<id> 指定这是一个面板窗口
@@ -122,6 +123,13 @@ function Shell() {
             style={{ pointerEvents: "auto" }}
           >
             <HeaderButton
+              active={overlay === "playlist"}
+              onClick={() =>
+                setOverlay((o) => (o === "playlist" ? "none" : "playlist"))
+              }
+              label="歌单"
+            />
+            <HeaderButton
               active={overlay === "search"}
               onClick={() =>
                 setOverlay((o) => (o === "search" ? "none" : "search"))
@@ -203,6 +211,12 @@ function Shell() {
       {/* overlay */}
       {overlay !== "none" && (
         <Overlay onClose={() => setOverlay("none")}>
+          {overlay === "playlist" && (
+            <PlaylistPanel
+              onPlay={handlePlay}
+              onAddToQueue={handleAddToQueue}
+            />
+          )}
           {overlay === "search" && (
             <SearchPanel onPlay={handlePlay} onAddToQueue={handleAddToQueue} />
           )}

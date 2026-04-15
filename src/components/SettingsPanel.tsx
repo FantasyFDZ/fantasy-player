@@ -1,17 +1,17 @@
 // 设置面板 —— 独立窗口版。
 //
-// 功能：
-//   - 列出所有 Provider，每个可编辑：name / base_url / protocol /
-//     api_key (password) / models（逐行输入）
-//   - 每个模型旁边有 radio，全局选中一个 (provider_id, model) 作为 active
-//   - active 选择保存到 settings 表 ai.active_provider_id / ai.active_model
-//   - api_key 留空 = 本地/免 token 场景合法
-//   - 新增 Provider 按钮（id 自动生成）
-//   - 删除 Provider 按钮
-//   - 保存按钮 per provider
+// 功能（按 tab 分组）：
+//   "模型"   —— LLM Provider 配置（name / base_url / protocol / api_key /
+//                models 列表 + active 选择，保存到 settings 表）
+//   "歌单迁移" —— QQ 音乐 ↔ 网易云 歌单迁移（原 PlaylistSync 面板）
+//
+// 默认显示"模型" tab。tab bar 风格沿用 SearchPanel 的 TabButton。
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type LlmProtocol, type LlmProvider } from "@/lib/api";
+import { PlaylistSync } from "@/plugins/PlaylistSync/PlaylistSync";
+
+type Tab = "models" | "playlist_sync";
 
 interface Draft {
   id: string;
@@ -48,6 +48,34 @@ function draftToProvider(d: Draft): LlmProvider {
 }
 
 export function SettingsPanel() {
+  const [tab, setTab] = useState<Tab>("models");
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Tab bar */}
+      <div className="mb-3 flex items-center gap-2">
+        <TabButton active={tab === "models"} onClick={() => setTab("models")}>
+          模型
+        </TabButton>
+        <TabButton
+          active={tab === "playlist_sync"}
+          onClick={() => setTab("playlist_sync")}
+        >
+          歌单迁移
+        </TabButton>
+      </div>
+
+      {/* Tab content */}
+      <div className="flex flex-1 flex-col" style={{ minHeight: 0 }}>
+        {tab === "models" ? <LlmSettingsView /> : <PlaylistSync />}
+      </div>
+    </div>
+  );
+}
+
+// ---- LLM Provider 设置视图 ------------------------------------------------
+
+function LlmSettingsView() {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [activeProviderId, setActiveProviderId] = useState<string>("");
   const [activeModel, setActiveModel] = useState<string>("");
@@ -546,3 +574,41 @@ const deleteButtonStyle: React.CSSProperties = {
   color: "rgba(255,150,130,0.9)",
   border: "1px solid rgba(255,150,130,0.6)",
 };
+
+// ---- Tab 切换按钮（沿用 SearchPanel 的视觉风格） ---------------------------
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="font-mono uppercase transition-all"
+      style={{
+        fontSize: "10px",
+        letterSpacing: "0.24em",
+        padding: "4px 12px",
+        color: active
+          ? "var(--theme-accent)"
+          : "var(--theme-wood-highlight)",
+        filter: active ? "brightness(1.5)" : "brightness(1.1)",
+        textShadow: "0 1px 0 rgba(0,0,0,0.7)",
+        background: active ? "rgba(255,255,255,0.05)" : "transparent",
+        border: active
+          ? "1px solid rgba(255,255,255,0.15)"
+          : "1px solid transparent",
+        borderRadius: 4,
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
+}

@@ -32,6 +32,10 @@ export function useLLM() {
     usage: null,
   });
   const unlistenRef = useRef<(() => void) | null>(null);
+  // 当前活跃请求的 id。reset() 会把它清成 null —— 这样任何
+  // 之前 in-flight 的 stream() promise 结算时会发现 id 不匹配，
+  // 不再往 state 里写陈旧结果，避免 cancel 被后到的响应覆盖。
+  const activeRequestIdRef = useRef<string | null>(null);
 
   const cleanup = useCallback(() => {
     if (unlistenRef.current) {
@@ -42,19 +46,25 @@ export function useLLM() {
 
   const request = useCallback(async (params: LlmRequestParams) => {
     cleanup();
+    const requestId = `r${Date.now()}-${nextRequestId++}`;
+    activeRequestIdRef.current = requestId;
     setState({ loading: true, error: null, content: "", usage: null });
     try {
       const resp = await api.llmRequest(params);
-      setState({
-        loading: false,
-        error: null,
-        content: resp.content,
-        usage: resp.usage,
-      });
+      if (activeRequestIdRef.current === requestId) {
+        setState({
+          loading: false,
+          error: null,
+          content: resp.content,
+          usage: resp.usage,
+        });
+      }
       return resp;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setState((prev) => ({ ...prev, loading: false, error: msg }));
+      if (activeRequestIdRef.current === requestId) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setState((prev) => ({ ...prev, loading: false, error: msg }));
+      }
       throw err;
     }
   }, [cleanup]);
@@ -63,10 +73,13 @@ export function useLLM() {
     async (params: LlmRequestParams) => {
       cleanup();
       const requestId = `r${Date.now()}-${nextRequestId++}`;
+      activeRequestIdRef.current = requestId;
       setState({ loading: true, error: null, content: "", usage: null });
 
       // 先订阅 event，再发起请求 —— 避免错过 chunk
       const unlisten = await onLlmChunk(requestId, (chunk) => {
+        // 被 reset() 作废后不再写 state
+        if (activeRequestIdRef.current !== requestId) return;
         if (chunk.done) {
           setState((prev) => ({
             ...prev,
@@ -84,25 +97,32 @@ export function useLLM() {
       try {
         const resp = await api.llmStream(requestId, params);
         // 最终 state 用 backend 返回的累积内容覆盖（确保完整）
-        setState({
-          loading: false,
-          error: null,
-          content: resp.content,
-          usage: resp.usage,
-        });
+        if (activeRequestIdRef.current === requestId) {
+          setState({
+            loading: false,
+            error: null,
+            content: resp.content,
+            usage: resp.usage,
+          });
+        }
         return resp;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setState((prev) => ({ ...prev, loading: false, error: msg }));
+        if (activeRequestIdRef.current === requestId) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setState((prev) => ({ ...prev, loading: false, error: msg }));
+        }
         throw err;
       } finally {
-        cleanup();
+        if (activeRequestIdRef.current === requestId) {
+          cleanup();
+        }
       }
     },
     [cleanup],
   );
 
   const reset = useCallback(() => {
+    activeRequestIdRef.current = null;
     cleanup();
     setState({ loading: false, error: null, content: "", usage: null });
   }, [cleanup]);

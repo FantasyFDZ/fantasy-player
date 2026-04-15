@@ -1,18 +1,22 @@
 // 播放列表浮层 —— 点击 PlayBar 右侧歌曲信息弹出。
 // 显示当前队列，当前播放行高亮，点击其他行跳转。
+//
+// 点击外部关闭、按钮切换开合由父组件 (PlayBar) 统一处理：父层用一个
+// ref 包住 popup + 触发按钮，判定外部时把按钮也算"内部"，避免 close
+// 与 toggle 相互抵消。
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type QueueSnapshot, type Song } from "@/lib/api";
 
 interface Props {
   open: boolean;
-  onClose: () => void;
   onJump: (song: Song) => void;
+  /** 清空队列后由父组件决定是否关闭 popup */
+  onAfterClear?: () => void;
 }
 
-export function QueuePopup({ open, onClose, onJump }: Props) {
+export function QueuePopup({ open, onJump, onAfterClear }: Props) {
   const [snapshot, setSnapshot] = useState<QueueSnapshot | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   // 打开时拉取队列
   useEffect(() => {
@@ -23,25 +27,6 @@ export function QueuePopup({ open, onClose, onJump }: Props) {
       .catch(() => setSnapshot(null));
   }, [open]);
 
-  // 点击外部关闭
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!containerRef.current?.contains(e.target as Node)) {
-        onClose();
-      }
-    };
-    // 延迟一 tick 以避免触发开启点击立即被判定为"外部"
-    const timer = setTimeout(
-      () => document.addEventListener("mousedown", onDown),
-      0,
-    );
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener("mousedown", onDown);
-    };
-  }, [open, onClose]);
-
   if (!open) return null;
 
   const tracks = snapshot?.tracks ?? [];
@@ -49,7 +34,6 @@ export function QueuePopup({ open, onClose, onJump }: Props) {
 
   return (
     <div
-      ref={containerRef}
       className="absolute"
       style={{
         bottom: "100%",
@@ -90,7 +74,7 @@ export function QueuePopup({ open, onClose, onJump }: Props) {
           type="button"
           onClick={() => {
             api.queueClear().catch(() => {});
-            onClose();
+            onAfterClear?.();
           }}
           className="font-mono"
           style={{
