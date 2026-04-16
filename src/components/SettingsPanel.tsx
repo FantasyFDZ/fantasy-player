@@ -7,45 +7,11 @@
 //
 // 默认显示"模型" tab。tab bar 风格沿用 SearchPanel 的 TabButton。
 
-import { useCallback, useEffect, useState } from "react";
-import { api, type LlmProtocol, type LlmProvider } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { api, type LlmProtocol } from "@/lib/api";
 import { PlaylistSync } from "@/plugins/PlaylistSync/PlaylistSync";
 
 type Tab = "models" | "playlist_sync";
-
-interface Draft {
-  id: string;
-  name: string;
-  protocol: LlmProtocol;
-  base_url: string;
-  api_key: string;
-  models_text: string; // 逐行编辑，保存时 split
-}
-
-function providerToDraft(p: LlmProvider): Draft {
-  return {
-    id: p.id,
-    name: p.name,
-    protocol: p.protocol,
-    base_url: p.base_url,
-    api_key: p.api_key,
-    models_text: p.models.join("\n"),
-  };
-}
-
-function draftToProvider(d: Draft): LlmProvider {
-  return {
-    id: d.id,
-    name: d.name.trim() || d.id,
-    protocol: d.protocol,
-    base_url: d.base_url.trim(),
-    api_key: d.api_key,
-    models: d.models_text
-      .split("\n")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0),
-  };
-}
 
 export function SettingsPanel() {
   const [tab, setTab] = useState<Tab>("models");
@@ -73,86 +39,97 @@ export function SettingsPanel() {
   );
 }
 
-// ---- LLM Provider 设置视图 ------------------------------------------------
+// ---- LLM 模型配置视图 (简化版 —— 单一配置) ----------------------------------
+//
+// 三个核心字段：调用地址、模型名称、API Key。
+// 协议默认 openai（kimi/通义/MiniMax 等国内模型都走 OpenAI 兼容接口），
+// 仅在使用 Claude API 时需要手动切到 anthropic。
+
+const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+const DEFAULT_MODEL = "kimi-k2.5";
 
 function LlmSettingsView() {
-  const [drafts, setDrafts] = useState<Draft[]>([]);
-  const [activeProviderId, setActiveProviderId] = useState<string>("");
-  const [activeModel, setActiveModel] = useState<string>("");
-  const [status, setStatus] = useState<string>("");
+  // 保留原 provider id，保存时回写同一条记录
+  const [providerId, setProviderId] = useState("default");
+  const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL);
+  const [modelName, setModelName] = useState(DEFAULT_MODEL);
+  const [apiKey, setApiKey] = useState("");
+  const [protocol, setProtocol] = useState<LlmProtocol>("openai");
+  const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
-
-  const reload = useCallback(async () => {
-    const providers = await api.llmProvidersList();
-    setDrafts(providers.map(providerToDraft));
-    const savedProvider = await api.getSetting("ai.active_provider_id");
-    const savedModel = await api.getSetting("ai.active_model");
-    setActiveProviderId(savedProvider ?? "");
-    setActiveModel(savedModel ?? "");
-    setLoading(false);
-  }, []);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
-    reload().catch(() => setLoading(false));
-  }, [reload]);
+    let cancelled = false;
+    (async () => {
+      const providers = await api.llmProvidersList();
+      const savedId =
+        (await api.getSetting("ai.active_provider_id").catch(() => null)) ?? "";
+      const savedModel =
+        (await api.getSetting("ai.active_model").catch(() => null)) ?? "";
+
+      // 优先用 active provider 填充
+      const active = providers.find((p) => p.id === savedId);
+      if (active) {
+        setProviderId(active.id);
+        setBaseUrl(active.base_url);
+        setApiKey(active.api_key);
+        setProtocol(active.protocol);
+        if (savedModel) setModelName(savedModel);
+        else if (active.models.length > 0) setModelName(active.models[0]);
+      } else {
+        // 没有 active：取第一个有 key 的
+        const first = providers.find(
+          (p) => p.api_key.trim() !== "" && p.models.length > 0,
+        );
+        if (first) {
+          setProviderId(first.id);
+          setBaseUrl(first.base_url);
+          setApiKey(first.api_key);
+          setProtocol(first.protocol);
+          setModelName(first.models[0]);
+        }
+        // 都没有 → 保持默认值
+      }
+      if (!cancelled) setLoading(false);
+    })().catch(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const flashStatus = (msg: string) => {
     setStatus(msg);
-    window.setTimeout(() => setStatus(""), 2500);
+    window.setTimeout(() => setStatus(""), 2800);
   };
 
-  const saveDraft = async (d: Draft) => {
-    try {
-      await api.llmProviderUpsert(draftToProvider(d));
-      flashStatus(`✓ ${d.name || d.id} 已保存`);
-    } catch (err) {
-      flashStatus(`✗ 保存失败：${err}`);
+  const handleSave = async () => {
+    const model = modelName.trim();
+    if (!model) {
+      flashStatus("✗ 请填写模型名称");
+      return;
     }
-  };
-
-  const deleteDraft = async (d: Draft) => {
-    try {
-      await api.llmProviderDelete(d.id);
-      setDrafts((prev) => prev.filter((x) => x.id !== d.id));
-      if (activeProviderId === d.id) {
-        setActiveProviderId("");
-        setActiveModel("");
-        await api.setSetting("ai.active_provider_id", "");
-        await api.setSetting("ai.active_model", "");
-      }
-      flashStatus(`✓ ${d.name || d.id} 已删除`);
-    } catch (err) {
-      flashStatus(`✗ 删除失败：${err}`);
+    if (!baseUrl.trim()) {
+      flashStatus("✗ 请填写调用地址");
+      return;
     }
-  };
-
-  const addProvider = () => {
-    const newId = `custom_${Date.now()}`;
-    setDrafts((prev) => [
-      ...prev,
-      {
-        id: newId,
-        name: "新 Provider",
-        protocol: "openai",
-        base_url: "https://api.example.com/v1",
-        api_key: "",
-        models_text: "",
-      },
-    ]);
-  };
-
-  const updateDraft = (id: string, patch: Partial<Draft>) => {
-    setDrafts((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, ...patch } : d)),
-    );
-  };
-
-  const selectActive = async (providerId: string, model: string) => {
-    setActiveProviderId(providerId);
-    setActiveModel(model);
-    await api.setSetting("ai.active_provider_id", providerId).catch(() => {});
-    await api.setSetting("ai.active_model", model).catch(() => {});
-    flashStatus(`✓ 当前模型：${providerId} / ${model}`);
+    try {
+      await api.llmProviderUpsert({
+        id: providerId,
+        name: model,
+        protocol,
+        base_url: baseUrl.trim(),
+        api_key: apiKey,
+        models: [model],
+      });
+      await api.setSetting("ai.active_provider_id", providerId);
+      await api.setSetting("ai.active_model", model);
+      flashStatus("✓ 配置已保存");
+    } catch (err) {
+      flashStatus(`✗ 保存失败: ${err}`);
+    }
   };
 
   if (loading) {
@@ -183,80 +160,126 @@ function LlmSettingsView() {
           filter: "brightness(1.4)",
         }}
       >
-        LLM Providers
+        模型配置
       </div>
       <div
-        className="mb-3"
+        className="mb-4"
         style={{
           fontSize: 11,
           color: "var(--theme-lyrics-mid)",
           lineHeight: 1.6,
         }}
       >
-        配置要用的大模型。api_key 存储在本机 SQLite，不会上传。
-        勾选下方某个模型作为所有 AI 面板的默认调用目标。
+        配置 AI 调用的大模型。API Key 存储在本机 SQLite，不会上传。
       </div>
 
-      {/* Active 提示 */}
-      <div
-        className="mb-3 rounded-md px-3 py-2"
-        style={{
-          background: "rgba(0,0,0,0.3)",
-          border: "1px solid rgba(0,0,0,0.45)",
-          fontSize: 11,
-        }}
-      >
-        <span style={{ color: "var(--theme-lyrics-mid)" }}>当前使用：</span>
-        <span
+      {/* 主表单 */}
+      <div className="flex flex-col gap-3">
+        <Field label="调用地址">
+          <input
+            type="text"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            style={inputStyle}
+            placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+          />
+        </Field>
+        <Field label="模型名称">
+          <input
+            type="text"
+            value={modelName}
+            onChange={(e) => setModelName(e.target.value)}
+            style={inputStyle}
+            placeholder="kimi-k2.5"
+          />
+        </Field>
+        <Field label="API Key">
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            style={inputStyle}
+            placeholder="留空 = 本地模型 / 免 token 服务"
+          />
+        </Field>
+
+        {/* 高级：协议切换 */}
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
           style={{
-            color: activeProviderId
-              ? "var(--theme-accent)"
-              : "rgba(255,150,130,0.85)",
+            alignSelf: "flex-start",
+            fontSize: 10,
             fontFamily: "var(--font-mono)",
-            marginLeft: 6,
+            letterSpacing: "0.1em",
+            color: "var(--theme-lyrics-mid)",
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            padding: "2px 0",
           }}
         >
-          {activeProviderId
-            ? `${activeProviderId} / ${activeModel}`
-            : "(未选中)"}
-        </span>
-      </div>
+          {showAdvanced ? "▾ 高级选项" : "▸ 高级选项"}
+        </button>
+        {showAdvanced && (
+          <div
+            className="rounded-md px-3 py-2"
+            style={{
+              background: "rgba(0,0,0,0.2)",
+              border: "1px solid rgba(0,0,0,0.35)",
+            }}
+          >
+            <Field label="协议">
+              <div className="flex items-center gap-4" style={{ marginTop: 2 }}>
+                {(["openai", "anthropic"] as const).map((p) => (
+                  <label
+                    key={p}
+                    className="flex items-center gap-1.5"
+                    style={{
+                      fontSize: 11,
+                      cursor: "pointer",
+                      color:
+                        protocol === p
+                          ? "var(--theme-accent)"
+                          : "var(--theme-lyrics-title)",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="llm-protocol"
+                      checked={protocol === p}
+                      onChange={() => setProtocol(p)}
+                      style={{ accentColor: "var(--theme-accent)" }}
+                    />
+                    <span className="font-mono">{p}</span>
+                  </label>
+                ))}
+              </div>
+            </Field>
+            <div
+              style={{
+                fontSize: 10,
+                color: "rgba(255,220,180,0.5)",
+                marginTop: 6,
+                lineHeight: 1.5,
+              }}
+            >
+              绝大多数模型（kimi / 通义 / MiniMax / DeepSeek 等）用 openai 协议。
+              仅在直连 Claude API 时切到 anthropic。
+            </div>
+          </div>
+        )}
 
-      {/* Provider 列表 */}
-      <div className="flex flex-1 flex-col gap-3 overflow-y-auto">
-        {drafts.map((d) => (
-          <ProviderCard
-            key={d.id}
-            draft={d}
-            activeProviderId={activeProviderId}
-            activeModel={activeModel}
-            onChange={(patch) => updateDraft(d.id, patch)}
-            onSave={() => saveDraft(d)}
-            onDelete={() => deleteDraft(d)}
-            onSelectActive={(model) => selectActive(d.id, model)}
-          />
-        ))}
+        {/* 保存 */}
+        <button
+          type="button"
+          onClick={handleSave}
+          className="mt-1 rounded-md transition-all hover:scale-[1.01]"
+          style={saveButtonStyle}
+        >
+          保存
+        </button>
       </div>
-
-      {/* 新增按钮 */}
-      <button
-        type="button"
-        onClick={addProvider}
-        className="mt-3 rounded-md px-3 py-2 transition-all hover:scale-[1.01]"
-        style={{
-          fontSize: 11,
-          fontFamily: "var(--font-mono)",
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          color: "var(--theme-accent)",
-          background:
-            "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(0,0,0,0.3))",
-          border: "1px dashed var(--theme-accent)",
-          cursor: "pointer",
-        }}
-      >
-        + 新增 Provider
-      </button>
 
       {status && (
         <div
@@ -273,245 +296,6 @@ function LlmSettingsView() {
           }}
         >
           {status}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---- Provider 卡片 ---------------------------------------------------------
-
-function ProviderCard({
-  draft,
-  activeProviderId,
-  activeModel,
-  onChange,
-  onSave,
-  onDelete,
-  onSelectActive,
-}: {
-  draft: Draft;
-  activeProviderId: string;
-  activeModel: string;
-  onChange: (patch: Partial<Draft>) => void;
-  onSave: () => void;
-  onDelete: () => void;
-  onSelectActive: (model: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const hasKey = draft.api_key.trim().length > 0;
-  const isLocal =
-    draft.base_url.includes("localhost") || draft.base_url.includes("127.0.0.1");
-  const modelList = draft.models_text
-    .split("\n")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-
-  return (
-    <div
-      style={{
-        padding: "10px 12px",
-        borderRadius: 8,
-        background: "rgba(0,0,0,0.3)",
-        border: "1px solid rgba(0,0,0,0.45)",
-        boxShadow: "inset 0 1px 2px rgba(0,0,0,0.5)",
-      }}
-    >
-      {/* 头部：名字 + 协议标签 + 状态 + 展开 */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            style={{
-              background: "transparent",
-              border: "none",
-              cursor: "pointer",
-              color: "var(--theme-lyrics-mid)",
-              fontSize: 10,
-              padding: "0 4px 0 0",
-            }}
-          >
-            {expanded ? "▾" : "▸"}
-          </button>
-          <span
-            className="font-display"
-            style={{
-              fontSize: 14,
-              fontWeight: 600,
-              color: "var(--theme-lyrics-title)",
-            }}
-          >
-            {draft.name}
-          </span>
-          {hasKey && (
-            <span
-              style={{
-                fontSize: 9,
-                color: "var(--theme-accent)",
-                padding: "1px 6px",
-                borderRadius: 999,
-                border: "1px solid var(--theme-accent)",
-              }}
-            >
-              已配置
-            </span>
-          )}
-          {isLocal && !hasKey && (
-            <span
-              style={{
-                fontSize: 9,
-                color: "rgba(230,200,120,0.85)",
-                padding: "1px 6px",
-                borderRadius: 999,
-                border: "1px solid rgba(230,200,120,0.6)",
-              }}
-            >
-              本地（免 token）
-            </span>
-          )}
-        </div>
-        <span
-          style={{
-            fontSize: 9,
-            color: "var(--theme-lyrics-mid)",
-            fontFamily: "var(--font-mono)",
-            letterSpacing: "0.1em",
-          }}
-        >
-          {draft.protocol}
-        </span>
-      </div>
-
-      {/* 默认折叠时的 URL 和模型数 */}
-      {!expanded && (
-        <div
-          className="mt-1 truncate"
-          style={{
-            fontSize: 10,
-            color: "var(--theme-lyrics-mid)",
-            fontFamily: "var(--font-mono)",
-          }}
-        >
-          {draft.base_url} · {modelList.length} 个模型
-        </div>
-      )}
-
-      {/* 模型列表（始终显示），每个模型前面一个 radio */}
-      {modelList.length > 0 && (
-        <div className="mt-2 flex flex-col gap-1">
-          {modelList.map((model) => {
-            const isActive =
-              activeProviderId === draft.id && activeModel === model;
-            return (
-              <label
-                key={model}
-                className="flex items-center gap-2 cursor-pointer"
-                style={{
-                  fontSize: 11,
-                  padding: "4px 8px",
-                  borderRadius: 4,
-                  background: isActive ? "rgba(0,0,0,0.4)" : "transparent",
-                  border: isActive
-                    ? "1px solid var(--theme-accent)"
-                    : "1px solid transparent",
-                }}
-              >
-                <input
-                  type="radio"
-                  name="active-model"
-                  checked={isActive}
-                  onChange={() => onSelectActive(model)}
-                  style={{ accentColor: "var(--theme-accent)" }}
-                />
-                <span
-                  className="font-mono"
-                  style={{
-                    color: isActive
-                      ? "var(--theme-accent)"
-                      : "var(--theme-lyrics-title)",
-                  }}
-                >
-                  {model}
-                </span>
-              </label>
-            );
-          })}
-        </div>
-      )}
-
-      {/* 展开后的可编辑字段 */}
-      {expanded && (
-        <div className="mt-3 flex flex-col gap-2">
-          <Field label="名称">
-            <input
-              type="text"
-              value={draft.name}
-              onChange={(e) => onChange({ name: e.target.value })}
-              style={inputStyle}
-            />
-          </Field>
-          <Field label="Base URL">
-            <input
-              type="text"
-              value={draft.base_url}
-              onChange={(e) => onChange({ base_url: e.target.value })}
-              style={inputStyle}
-              placeholder="https://api.example.com/v1"
-            />
-          </Field>
-          <Field label="协议">
-            <select
-              value={draft.protocol}
-              onChange={(e) =>
-                onChange({ protocol: e.target.value as LlmProtocol })
-              }
-              style={{ ...inputStyle, padding: "6px 10px" }}
-            >
-              <option value="openai">openai</option>
-              <option value="anthropic">anthropic</option>
-            </select>
-          </Field>
-          <Field label="API Key">
-            <input
-              type="password"
-              value={draft.api_key}
-              onChange={(e) => onChange({ api_key: e.target.value })}
-              style={inputStyle}
-              placeholder="留空 = 本地/免 token"
-            />
-          </Field>
-          <Field label="模型（每行一个）">
-            <textarea
-              value={draft.models_text}
-              onChange={(e) => onChange({ models_text: e.target.value })}
-              rows={4}
-              style={{
-                ...inputStyle,
-                resize: "vertical",
-                fontFamily: "var(--font-mono)",
-                fontSize: 10,
-              }}
-              placeholder="qwen3.5-plus&#10;glm-5"
-            />
-          </Field>
-
-          <div className="flex gap-2 pt-1">
-            <button
-              type="button"
-              onClick={onSave}
-              style={saveButtonStyle}
-            >
-              保存
-            </button>
-            <button
-              type="button"
-              onClick={onDelete}
-              style={deleteButtonStyle}
-            >
-              删除
-            </button>
-          </div>
         </div>
       )}
     </div>
@@ -567,12 +351,6 @@ const saveButtonStyle: React.CSSProperties = {
   padding: "5px 12px",
   borderRadius: 4,
   cursor: "pointer",
-};
-
-const deleteButtonStyle: React.CSSProperties = {
-  ...saveButtonStyle,
-  color: "rgba(255,150,130,0.9)",
-  border: "1px solid rgba(255,150,130,0.6)",
 };
 
 // ---- Tab 切换按钮（沿用 SearchPanel 的视觉风格） ---------------------------

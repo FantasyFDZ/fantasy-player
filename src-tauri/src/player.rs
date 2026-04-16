@@ -196,6 +196,11 @@ impl PlayerState {
         send_command(json!({ "command": ["stop"] }))?;
         Ok(())
     }
+
+    /// 彻底退出 mpv 子进程（app 关闭时调用）。
+    pub fn quit(&self) {
+        let _ = send_command(json!({ "command": ["quit"] }));
+    }
 }
 
 impl Default for PlayerState {

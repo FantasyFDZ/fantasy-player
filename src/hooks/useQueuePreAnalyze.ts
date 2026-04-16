@@ -68,13 +68,16 @@ export function useQueuePreAnalyze() {
 
   // 歌曲切换时重新拉取（队列可能变了）
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | null = null;
     onSongChanged(() => {
-      refreshAndAnalyze();
+      if (!cancelled) refreshAndAnalyze();
     }).then((fn) => {
-      unlisten = fn;
+      if (cancelled) fn();
+      else unlisten = fn;
     });
     return () => {
+      cancelled = true;
       if (unlisten) unlisten();
     };
   }, [refreshAndAnalyze]);

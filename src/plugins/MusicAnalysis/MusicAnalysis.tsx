@@ -63,7 +63,7 @@ export function MusicAnalysis({ song }: Props) {
               letterSpacing: "0.1em",
             }}
           >
-            独白
+            AI 独白
           </span>
           <button
             type="button"

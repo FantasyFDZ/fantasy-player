@@ -57,19 +57,39 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
     };
   }, [queueOpen]);
 
+  // StrictMode 安全的 Tauri 事件订阅。
+  //
+  // 关键细节：listen() 返回的 unlisten 是 **async** 的（在 .then 里才拿到），
+  // 而 StrictMode 的 cleanup 是同步的。如果 cleanup 在 .then resolve 之前跑，
+  // 旧监听器就会泄漏 —— 导致 onTrackEnded 被触发两次，播放器连跳两首。
+  //
+  // 解法：用 cancelled flag 作「已被清理」标记。.then 到达时如果 cancelled
+  // 已为 true，立刻解除监听；handler 里也先检查 cancelled。
   useEffect(() => {
-    let unlistenUpdate: (() => void) | undefined;
-    let unlistenEnded: (() => void) | undefined;
-    onPlaybackUpdate(setStatus).then((fn) => (unlistenUpdate = fn));
+    let cancelled = false;
+    const cleanups: Array<() => void> = [];
+
+    onPlaybackUpdate((s) => {
+      if (!cancelled) setStatus(s);
+    }).then((fn) => {
+      if (cancelled) fn();
+      else cleanups.push(fn);
+    });
+
     onTrackEnded(() => {
+      if (cancelled) return;
       api
         .nextTrack(true)
         .then((song) => onSongChange(song))
         .catch(() => {});
-    }).then((fn) => (unlistenEnded = fn));
+    }).then((fn) => {
+      if (cancelled) fn();
+      else cleanups.push(fn);
+    });
+
     return () => {
-      unlistenUpdate?.();
-      unlistenEnded?.();
+      cancelled = true;
+      cleanups.forEach((fn) => fn());
     };
   }, [onSongChange]);
 

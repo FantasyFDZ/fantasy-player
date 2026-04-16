@@ -13,6 +13,8 @@ pub mod qqmusic_api;
 pub mod queue;
 pub mod sync;
 
+use tauri::Manager;
+
 use auth::AuthState;
 use db::Db;
 use llm_client::LlmClient;
@@ -52,6 +54,17 @@ pub fn run() {
         .manage(queue)
         .manage(db)
         .manage(llm)
+        // 主窗口关闭 → 杀 mpv + 退出 app（macOS 默认只关窗口不退出）
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    if let Some(p) = window.app_handle().try_state::<PlayerState>() {
+                        p.quit();
+                    }
+                    window.app_handle().exit(0);
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::write_log,
             commands::auth_session,
@@ -106,6 +119,14 @@ pub fn run() {
             commands::panel_open_list,
             commands::panel_persist_geometry,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // 程序坞右键 Quit / 系统终止信号 → 杀 mpv
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                if let Some(p) = app_handle.try_state::<PlayerState>() {
+                    p.quit();
+                }
+            }
+        });
 }

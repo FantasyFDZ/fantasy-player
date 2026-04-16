@@ -16,15 +16,13 @@ import { Gramophone } from "@/core/Gramophone/Gramophone";
 import { Lyrics } from "@/core/Lyrics/Lyrics";
 import { ThemeProvider } from "@/core/ThemeProvider/ThemeProvider";
 import { LightLayer } from "@/core/ThemeProvider/LightLayer";
-import { PanelProvider } from "@/core/PanelManager/PanelProvider";
+import { PanelProvider, usePanels } from "@/core/PanelManager/PanelProvider";
 import { PanelWindow } from "@/core/PanelManager/PanelWindow";
 import { PlayBar } from "@/components/PlayBar";
 import { SearchPanel } from "@/components/SearchPanel";
 import { PlaylistPanel } from "@/components/PlaylistPanel";
 import { LoginPanel } from "@/components/LoginPanel";
 import { SettingsPanel } from "@/components/SettingsPanel";
-import { BrandMenu } from "@/components/BrandMenu";
-import { SidePanelSwitch } from "@/components/SidePanelSwitch";
 import { useQueuePreAnalyze } from "@/hooks/useQueuePreAnalyze";
 import { PANEL_PLUGINS } from "@/plugins";
 import {
@@ -59,6 +57,7 @@ function Shell() {
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [playing, setPlaying] = useState(false);
   const [overlay, setOverlay] = useState<Overlay>("none");
+  const panels = usePanels();
 
   // 队列预分析：后台提前提取音频特征，播放时只需等 LLM 文字生成
   useQueuePreAnalyze();
@@ -70,11 +69,18 @@ function Shell() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     onPlaybackUpdate((status) => {
-      setPlaying(status.state === "playing");
-    }).then((fn) => (unlisten = fn));
-    return () => unlisten?.();
+      if (!cancelled) setPlaying(status.state === "playing");
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   const handlePlay = useCallback(async (song: Song, queue: Song[]) => {
@@ -115,8 +121,15 @@ function Shell() {
           style={{ zIndex: 20 }}
           data-tauri-drag-region
         >
+          {/* 左侧：账号（原 BrandMenu 位置） */}
           <div style={{ pointerEvents: "auto" }}>
-            <BrandMenu />
+            <HeaderButton
+              active={overlay === "account"}
+              onClick={() =>
+                setOverlay((o) => (o === "account" ? "none" : "account"))
+              }
+              label={user ? user.nickname : "登录"}
+            />
           </div>
           <div
             className="flex items-center gap-4"
@@ -137,11 +150,9 @@ function Shell() {
               label="搜索"
             />
             <HeaderButton
-              active={overlay === "account"}
-              onClick={() =>
-                setOverlay((o) => (o === "account" ? "none" : "account"))
-              }
-              label={user ? user.nickname : "登录"}
+              active={panels.isOpen("music_analysis")}
+              onClick={() => panels.toggle("music_analysis")}
+              label="情绪"
             />
             {/* 窗口控制：设置 + 最小化 + 关闭 */}
             <div
@@ -204,9 +215,6 @@ function Shell() {
 
         {/* PlayBar */}
         <PlayBar currentSong={currentSong} onSongChange={setCurrentSong} />
-
-      {/* 面板切换按钮 */}
-      <SidePanelSwitch />
 
       {/* overlay */}
       {overlay !== "none" && (

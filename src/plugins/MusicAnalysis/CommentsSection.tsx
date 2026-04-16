@@ -61,7 +61,7 @@ export function CommentsSection({ song }: Props) {
           letterSpacing: "0.1em",
         }}
       >
-        云抑
+        网抑云
       </div>
       <div>
         <div

@@ -143,25 +143,8 @@ export function PanelWindow({ panelId }: Props) {
           flexShrink: 0,
         }}
       >
-        <div
-          data-tauri-drag-region
-          className="flex items-center gap-2"
-          style={{ pointerEvents: "none" }}
-        >
-          <span style={{ fontSize: 13 }}>{plugin.icon}</span>
-          <span
-            className="font-display"
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              color: "var(--theme-label)",
-              filter: "brightness(1.4)",
-              letterSpacing: "0.1em",
-            }}
-          >
-            {plugin.name}
-          </span>
-        </div>
+        {/* 左侧留空 —— 仅保留拖拽区 */}
+        <div data-tauri-drag-region style={{ flex: 1 }} />
         <button
           type="button"
           onClick={() => getCurrentWindow().close()}
