@@ -37,6 +37,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "vendor/mpv/mpv": "vendor/mpv/mpv",
+      "vendor/mpv/libs/*": "vendor/mpv/libs/",
+      "vendor/node": "vendor/node",
+      "vendor/scripts/*.cjs": "vendor/scripts/",
+      "vendor/node_modules/**/*": "vendor/node_modules/",
+      "vendor/python/**/*": "vendor/python/",
+      "vendor/sidecar/*.py": "vendor/sidecar/",
+      "vendor/sidecar/models/*": "vendor/sidecar/models/"
+    },
     "macOS": {
       "minimumSystemVersion": "13.0"
     }

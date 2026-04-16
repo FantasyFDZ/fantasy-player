@@ -11,16 +11,22 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
+
+/// 全局保存 mpv 子进程句柄，用于在 quit() 时彻底 kill。
+/// Command::spawn() 默认是 fire-and-forget：父进程 exit(0) 时子进程变孤儿继续播放。
+/// 必须显式 kill。
+static MPV_CHILD: Lazy<Mutex<Option<Child>>> = Lazy::new(|| Mutex::new(None));
 
 // ---- paths -----------------------------------------------------------------
 
@@ -36,6 +42,18 @@ fn socket_path() -> Result<PathBuf, PlayerError> {
 }
 
 fn locate_mpv() -> Result<PathBuf, PlayerError> {
+    // 优先使用打包进 .app 的 mpv（Contents/Resources/vendor/mpv/mpv）
+    if let Ok(bundled) = bundled_path("vendor/mpv/mpv") {
+        if bundled.is_file() {
+            return Ok(bundled);
+        }
+    }
+    // 开发环境：仓库根目录 src-tauri/vendor/mpv/mpv
+    let dev_vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor/mpv/mpv");
+    if dev_vendor.is_file() {
+        return Ok(dev_vendor);
+    }
+    // 系统回退
     let candidates = [
         "/opt/homebrew/bin/mpv",
         "/usr/local/bin/mpv",
@@ -56,6 +74,14 @@ fn locate_mpv() -> Result<PathBuf, PlayerError> {
         }
     }
     Err(PlayerError::MpvNotFound)
+}
+
+/// 相对可执行文件，定位 Contents/Resources/<rel>
+pub(crate) fn bundled_path(rel: &str) -> Result<PathBuf, PlayerError> {
+    let exe = std::env::current_exe()?;
+    let parent = exe.parent().ok_or(PlayerError::MpvNotFound)?;
+    // macOS .app 结构：Contents/MacOS/<bin> → Contents/Resources
+    Ok(parent.join("../Resources").join(rel))
 }
 
 // ---- errors ----------------------------------------------------------------
@@ -198,8 +224,16 @@ impl PlayerState {
     }
 
     /// 彻底退出 mpv 子进程（app 关闭时调用）。
+    /// 先尝试 IPC quit 优雅退出，再强制 kill 兜底 —— IPC 是异步的，
+    /// 父进程可能在 mpv 处理前就 exit，导致 mpv 变孤儿继续播放。
     pub fn quit(&self) {
         let _ = send_command(json!({ "command": ["quit"] }));
+        if let Ok(mut guard) = MPV_CHILD.lock() {
+            if let Some(mut child) = guard.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
     }
 }
 
@@ -230,7 +264,7 @@ fn start_mpv_process() -> Result<(), PlayerError> {
         let _ = fs::remove_file(&socket);
     }
     let mpv = locate_mpv()?;
-    Command::new(&mpv)
+    let child = Command::new(&mpv)
         .arg("--idle=yes")
         .arg("--video=no")
         .arg("--no-terminal")
@@ -242,6 +276,8 @@ fn start_mpv_process() -> Result<(), PlayerError> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
+    // 记下 Child 以便 quit() 时 kill
+    *MPV_CHILD.lock().unwrap() = Some(child);
 
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {

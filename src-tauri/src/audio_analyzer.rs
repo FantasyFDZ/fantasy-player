@@ -142,7 +142,26 @@ fn find_python() -> Result<PathBuf, AnalyzeError> {
         return Ok(path.clone());
     }
 
-    // Melody 依赖 librosa，在本机 python3.12 里已安装；其他版本作为回退
+    // 1. bundled：Contents/Resources/vendor/python/bin/python3.12
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let bundled = parent.join("../Resources/vendor/python/bin/python3.12");
+            if bundled.is_file() {
+                let resolved = bundled.canonicalize().unwrap_or(bundled);
+                let _ = CACHED.set(resolved.clone());
+                return Ok(resolved);
+            }
+        }
+    }
+    // 2. dev：src-tauri/vendor/python/bin/python3.12
+    let dev_vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("vendor/python/bin/python3.12");
+    if dev_vendor.is_file() {
+        let _ = CACHED.set(dev_vendor.clone());
+        return Ok(dev_vendor);
+    }
+
+    // 3. 系统回退 —— 校验能 import librosa
     let candidates = [
         "/opt/homebrew/bin/python3.12",
         "/opt/homebrew/bin/python3.11",
@@ -154,7 +173,6 @@ fn find_python() -> Result<PathBuf, AnalyzeError> {
 
     for candidate in candidates {
         let path = PathBuf::from(candidate);
-        // 校验该 Python 是否真的能 import librosa
         let ok = Command::new(&path)
             .args(["-c", "import librosa"])
             .stdout(Stdio::null())
@@ -176,20 +194,13 @@ fn script_path() -> Result<PathBuf, AnalyzeError> {
         return Ok(path.clone());
     }
 
-    let manifest =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/audio_analyzer.py");
-    if manifest.is_file() {
-        let resolved = manifest.canonicalize().unwrap_or(manifest);
-        let _ = CACHED.set(resolved.clone());
-        return Ok(resolved);
-    }
-
-    // 兜底：相对于可执行文件（bundled 模式）
+    // 1. bundled
     if let Ok(exe) = std::env::current_exe() {
         for rel in [
+            "../Resources/vendor/sidecar/audio_analyzer.py",
+            "../Resources/sidecar/audio_analyzer.py",
             "../sidecar/audio_analyzer.py",
             "../../sidecar/audio_analyzer.py",
-            "../Resources/sidecar/audio_analyzer.py",
         ] {
             let candidate = exe.parent().map(|p| p.join(rel)).unwrap_or_default();
             if candidate.is_file() {
@@ -197,6 +208,21 @@ fn script_path() -> Result<PathBuf, AnalyzeError> {
                 let _ = CACHED.set(resolved.clone());
                 return Ok(resolved);
             }
+        }
+    }
+
+    // 2. dev：src-tauri/vendor/sidecar/audio_analyzer.py 或原 sidecar/
+    let candidates = [
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("vendor/sidecar/audio_analyzer.py"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../sidecar/audio_analyzer.py"),
+    ];
+    for candidate in candidates {
+        if candidate.is_file() {
+            let resolved = candidate.canonicalize().unwrap_or(candidate);
+            let _ = CACHED.set(resolved.clone());
+            return Ok(resolved);
         }
     }
     Err(AnalyzeError::ScriptMissing)

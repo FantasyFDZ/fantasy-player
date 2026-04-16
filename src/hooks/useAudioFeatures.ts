@@ -3,10 +3,27 @@
 // 当 song 变化时，触发后端 analyze_song（缓存命中秒回，否则下载 +
 // Python sidecar 分析）。
 //
-// 返回 features / loading / error / songId / setFeatures（直接更新状态）
+// 去重：模块级 Promise 缓存让多个组件同时 hook 同一首歌时共享一次请求，
+// 避免 MusicAnalysis + MonologueSection 各自发一次分析。
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type AudioFeatures, type Song } from "@/lib/api";
+
+// 进行中的请求：songId → Promise<AudioFeatures>
+// 请求成功/失败后立即从 Map 删除；下次相同 songId 的调用会重新请求，
+// 但后端自带 DB 缓存，秒回。
+const inFlight = new Map<string, Promise<AudioFeatures>>();
+
+function analyzeShared(song: Song): Promise<AudioFeatures> {
+  const id = song.id;
+  const existing = inFlight.get(id);
+  if (existing) return existing;
+  const promise = api.analyzeSong(song).finally(() => {
+    inFlight.delete(id);
+  });
+  inFlight.set(id, promise);
+  return promise;
+}
 
 export interface UseAudioFeaturesState {
   features: AudioFeatures | null;
@@ -41,8 +58,7 @@ export function useAudioFeatures(song: Song | null): UseAudioFeaturesState {
     const id = song.id;
     let cancelled = false;
     setState({ features: null, loading: true, error: null, songId: id });
-    api
-      .analyzeSong(song)
+    analyzeShared(song)
       .then((features) => {
         if (cancelled) return;
         setState({ features, loading: false, error: null, songId: id });

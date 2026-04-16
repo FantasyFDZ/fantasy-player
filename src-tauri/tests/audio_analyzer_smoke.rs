@@ -3,13 +3,15 @@
 //! 流程：搜索网易云获取一首公开歌曲 → 拿 stream URL → 下载 → Python
 //! sidecar 分析 → 验证特征非空。全部用 in-memory Db。
 //!
-//! 需要网络 + python3.12 + librosa。
+//! 需要网络 + python3.12 + librosa，所以默认 ignore。手动跑：
+//!   cargo test --test audio_analyzer_smoke -- --ignored --nocapture
 
 use melody_lib::audio_analyzer::analyze_song_blocking;
 use melody_lib::db::Db;
 use melody_lib::netease_api;
 
 #[test]
+#[ignore]
 fn end_to_end_analyze_real_song() {
     // 1. 搜歌 —— 用一首周杰伦《晴天》做基准，Phase 1 已验证其可播放
     let results =
@@ -40,7 +42,9 @@ fn end_to_end_analyze_real_song() {
         song.duration_secs,
     )
     .expect("song_upsert");
-    let features = analyze_song_blocking(&db, &song.id, &url.url).expect("analyze");
+    let features =
+        analyze_song_blocking(&db, &song.id, &song.name, &song.artist, &url.url)
+            .expect("analyze");
     eprintln!(
         "[step3] bpm={:.1} (conf {:.2}) key={} (conf {:.2}) \
          energy={:.3} valence={:.3}",
@@ -70,7 +74,9 @@ fn end_to_end_analyze_real_song() {
     );
 
     // 4. 验证缓存命中 —— 第二次调用应该从 Db 直接返回
-    let cached = analyze_song_blocking(&db, &song.id, &url.url).expect("cached");
+    let cached =
+        analyze_song_blocking(&db, &song.id, &song.name, &song.artist, &url.url)
+            .expect("cached");
     assert_eq!(cached.bpm, features.bpm);
     assert_eq!(cached.key, features.key);
     eprintln!("[step4] 缓存命中 ✓");

@@ -16,6 +16,10 @@ npm-debug.log*
 src-tauri/target/
 src-tauri/gen/schemas/
 
+# Bundled binaries for self-contained .app
+# Regenerate with: scripts/bootstrap_vendor.sh
+src-tauri/vendor/
+
 # OS
 .DS_Store
 Thumbs.db

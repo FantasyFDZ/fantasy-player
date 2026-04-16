@@ -39,6 +39,24 @@ fn locate_node() -> Result<PathBuf, QQMusicError> {
         return Ok(path.clone());
     }
 
+    // 1. bundled
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let bundled = parent.join("../Resources/vendor/node");
+            if bundled.is_file() {
+                let resolved = bundled.canonicalize().unwrap_or(bundled);
+                let _ = CACHED.set(resolved.clone());
+                return Ok(resolved);
+            }
+        }
+    }
+    // 2. dev
+    let dev_vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor/node");
+    if dev_vendor.is_file() {
+        let _ = CACHED.set(dev_vendor.clone());
+        return Ok(dev_vendor);
+    }
+    // 3. 系统回退
     let candidates = [
         "/opt/homebrew/bin/node",
         "/usr/local/bin/node",
@@ -51,7 +69,6 @@ fn locate_node() -> Result<PathBuf, QQMusicError> {
             return Ok(path);
         }
     }
-    // Fall back to PATH lookup.
     if let Some(path_env) = env::var_os("PATH") {
         for dir in env::split_paths(&path_env) {
             let candidate = dir.join("node");
@@ -70,17 +87,13 @@ fn adapter_script_path() -> Result<PathBuf, QQMusicError> {
         return Ok(path.clone());
     }
 
-    // Prefer the path relative to CARGO_MANIFEST_DIR (dev builds) and fall
-    // back to paths relative to the executable for bundled installs.
-    let manifest_candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../scripts/qqmusic_adapter.cjs");
-
     let exe_candidates: Vec<PathBuf> = std::env::current_exe()
         .ok()
         .into_iter()
         .flat_map(|exe| {
             let parent = exe.parent().map(Path::to_path_buf).unwrap_or_default();
             vec![
+                parent.join("../Resources/vendor/scripts/qqmusic_adapter.cjs"),
                 parent.join("../scripts/qqmusic_adapter.cjs"),
                 parent.join("../../scripts/qqmusic_adapter.cjs"),
                 parent.join("../Resources/scripts/qqmusic_adapter.cjs"),
@@ -88,7 +101,16 @@ fn adapter_script_path() -> Result<PathBuf, QQMusicError> {
         })
         .collect();
 
-    for candidate in std::iter::once(manifest_candidate).chain(exe_candidates) {
+    let dev_vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("vendor/scripts/qqmusic_adapter.cjs");
+    let manifest_candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../scripts/qqmusic_adapter.cjs");
+
+    let all = exe_candidates
+        .into_iter()
+        .chain(std::iter::once(dev_vendor))
+        .chain(std::iter::once(manifest_candidate));
+    for candidate in all {
         if candidate.is_file() {
             let resolved = candidate.canonicalize().unwrap_or(candidate);
             let _ = CACHED.set(resolved.clone());
@@ -96,7 +118,8 @@ fn adapter_script_path() -> Result<PathBuf, QQMusicError> {
         }
     }
     Err(QQMusicError::ScriptMissing(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/qqmusic_adapter.cjs"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("vendor/scripts/qqmusic_adapter.cjs"),
     ))
 }
 
@@ -118,10 +141,18 @@ pub fn invoke(command: &str, payload: Value) -> Result<Value, QQMusicError> {
     let script = adapter_script_path()?;
     let payload_str = serde_json::to_string(&payload)?;
 
+    // cwd → vendor/（让 node 能 resolve vendor/node_modules）
+    let cwd = script
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+
     let output = Command::new(&node)
         .arg(&script)
         .arg(command)
         .arg(&payload_str)
+        .current_dir(&cwd)
         .output()?;
 
     let stdout = String::from_utf8(output.stdout).map_err(|_| QQMusicError::Encoding)?;

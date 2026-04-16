@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { listen, emit } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   api,
   onPlaybackUpdate,
@@ -43,6 +44,27 @@ export function PanelWindow({ panelId }: Props) {
       unlistenReply?.();
     };
   }, []);
+
+  // 窗口 resize / move → 500ms 去抖后持久化几何
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let timer: number | undefined;
+    const schedule = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        api.panelPersistGeometry(panelId).catch(() => {});
+      }, 500);
+    };
+    let unlistenResize: (() => void) | undefined;
+    let unlistenMove: (() => void) | undefined;
+    win.onResized(schedule).then((fn) => { unlistenResize = fn; }).catch(() => {});
+    win.onMoved(schedule).then((fn) => { unlistenMove = fn; }).catch(() => {});
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      unlistenResize?.();
+      unlistenMove?.();
+    };
+  }, [panelId]);
 
   // 启动时拉当前歌 + 订阅变化。
   useEffect(() => {
