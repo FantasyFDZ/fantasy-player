@@ -82,7 +82,7 @@ export function CommentsSection({ song }: Props) {
         >
           <span
             style={{
-              fontSize: 10,
+              fontSize: 13,
               color: "var(--theme-lyrics-mid)",
               fontFamily: "var(--font-display)",
             }}

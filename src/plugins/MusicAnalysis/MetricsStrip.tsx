@@ -40,11 +40,12 @@ export function MetricsStrip({ features, songId, onFeaturesUpdate }: Props) {
       >
         <span
           style={{
-            fontSize: 9,
-            letterSpacing: "0.18em",
-            textTransform: "uppercase",
-            color: "var(--theme-lyrics-mid)",
-            fontFamily: "var(--font-mono)",
+            fontSize: 14,
+            fontWeight: 500,
+            letterSpacing: "0.1em",
+            color: "var(--theme-label)",
+            filter: "brightness(1.4)",
+            fontFamily: "var(--font-display)",
           }}
         >
           风格
@@ -90,11 +91,12 @@ function MetricCell({ label, value }: { label: string; value: string }) {
     >
       <span
         style={{
-          fontSize: 9,
-          letterSpacing: "0.18em",
-          textTransform: "uppercase",
-          color: "var(--theme-lyrics-mid)",
-          fontFamily: "var(--font-mono)",
+          fontSize: 14,
+          fontWeight: 500,
+          letterSpacing: "0.1em",
+          color: "var(--theme-label)",
+          filter: "brightness(1.4)",
+          fontFamily: "var(--font-display)",
         }}
       >
         {label}
@@ -167,11 +169,12 @@ function EditableBpmCell({
     >
       <span
         style={{
-          fontSize: 9,
-          letterSpacing: "0.18em",
-          textTransform: "uppercase",
-          color: "var(--theme-lyrics-mid)",
-          fontFamily: "var(--font-mono)",
+          fontSize: 14,
+          fontWeight: 500,
+          letterSpacing: "0.1em",
+          color: "var(--theme-label)",
+          filter: "brightness(1.4)",
+          fontFamily: "var(--font-display)",
         }}
       >
         BPM

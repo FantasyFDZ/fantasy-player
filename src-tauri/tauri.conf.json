@@ -10,6 +10,7 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -19,9 +20,7 @@
         "minWidth": 1050,
         "minHeight": 700,
         "decorations": false,
-        "transparent": false,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "transparent": true
       }
     ],
     "security": {

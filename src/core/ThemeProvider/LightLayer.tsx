@@ -1,12 +1,90 @@
-// 全局光线层 —— 直接渲染 registry 里 per-theme godRays / ambientGlows / dust。
-// 每个主题的光线几何都是独立配置，不再用通用参数。
+// 全局光线层。
 //
-// 这样做的原因：原型每个主题的光线合成完全不同（数量、角度、位置、模糊、
-// 形状），用通用参数根本还原不出来。直接 1:1 映射原型 HTML。
+// DynamicLightLayer：根据专辑主色动态生成辉光效果。
+// LightLayer：保留兼容，从静态 registry 读取 per-theme 配置。
 
 import { THEMES } from "@/themes/registry";
 import { useTheme } from "./ThemeProvider";
+import type { AlbumColor } from "@/core/VinylDisc/useAlbumColor";
 
+interface DynamicProps {
+  color: AlbumColor;
+}
+
+/** 动态光线层 —— 辉光颜色跟随专辑封面 */
+export function DynamicLightLayer({ color }: DynamicProps) {
+  const { r, g, b } = color;
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 overflow-hidden"
+      style={{ zIndex: 1 }}
+    >
+      {/* 左上环境辉光 */}
+      <div
+        className="absolute"
+        style={{
+          top: "-5%",
+          left: "-5%",
+          width: "55%",
+          height: "65%",
+          background: `radial-gradient(ellipse at 40% 30%,
+            rgba(${r},${g},${b},0.10) 0%,
+            rgba(${r},${g},${b},0.03) 50%,
+            transparent 70%
+          )`,
+          filter: "blur(40px)",
+          transition: "background 2s ease",
+        }}
+      />
+
+      {/* 右下微弱辉光 */}
+      <div
+        className="absolute"
+        style={{
+          bottom: "-10%",
+          right: "-5%",
+          width: "45%",
+          height: "50%",
+          background: `radial-gradient(ellipse at 60% 70%,
+            rgba(${r},${g},${b},0.06) 0%,
+            transparent 60%
+          )`,
+          filter: "blur(50px)",
+          transition: "background 2s ease",
+        }}
+      />
+
+      {/* 微光粒子 */}
+      {[0, 1, 2].map((i) => (
+        <div
+          key={`dust-dyn-${i}`}
+          className="absolute"
+          style={{
+            top: `${20 + i * 18}%`,
+            left: `${8 + i * 6}%`,
+            width: 2 + i,
+            height: 2 + i,
+            background: `rgba(${Math.min(255, r + 60)},${Math.min(255, g + 60)},${Math.min(255, b + 60)},0.4)`,
+            borderRadius: "50%",
+            animation: "melody-dust-shimmer 3s ease-in-out infinite",
+            animationDelay: `${i * 0.8}s`,
+            transition: "background 2s ease",
+            zIndex: 2,
+          }}
+        />
+      ))}
+
+      <style>{`
+        @keyframes melody-dust-shimmer {
+          0%, 100% { opacity: 0.2; }
+          50%      { opacity: 0.5; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+/** 静态光线层（兼容旧 per-theme 配置，PanelWindow 等场景使用） */
 export function LightLayer() {
   const { current } = useTheme();
   const theme = THEMES[current];
@@ -16,7 +94,6 @@ export function LightLayer() {
       className="pointer-events-none absolute inset-0 overflow-hidden"
       style={{ zIndex: 1 }}
     >
-      {/* 1. 环境辉光（radial ellipses） */}
       {theme.ambientGlows.map((g, i) => (
         <div
           key={`glow-${current}-${i}`}
@@ -33,8 +110,6 @@ export function LightLayer() {
           }}
         />
       ))}
-
-      {/* 2. god-ray 光柱 */}
       {theme.godRays.map((ray, i) => (
         <div
           key={`ray-${current}-${i}`}
@@ -51,8 +126,6 @@ export function LightLayer() {
           }}
         />
       ))}
-
-      {/* 3. 浮尘粒子（shimmer 闪烁） */}
       {theme.dust.map((p, i) => (
         <div
           key={`dust-${current}-${i}`}
@@ -65,13 +138,12 @@ export function LightLayer() {
             background: p.color,
             borderRadius: p.petal ? "50% 0 50% 50%" : "50%",
             transform: p.petal ? "rotate(45deg)" : undefined,
-            animation: `melody-dust-shimmer 3s ease-in-out infinite`,
+            animation: "melody-dust-shimmer 3s ease-in-out infinite",
             animationDelay: `${p.delay}s`,
             zIndex: 2,
           }}
         />
       ))}
-
       <style>{`
         @keyframes melody-dust-shimmer {
           0%, 100% { opacity: 0.3; }

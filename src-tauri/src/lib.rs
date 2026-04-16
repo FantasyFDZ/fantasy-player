@@ -54,6 +54,26 @@ pub fn run() {
         .manage(queue)
         .manage(db)
         .manage(llm)
+        .setup(|app| {
+            // macOS：把窗口和 webview 背景设为完全透明，去掉白色边框
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::Manager;
+                if let Some(win) = app.get_webview_window("main") {
+                    use objc2_app_kit::{NSColor, NSWindow};
+                    use objc2_foundation::MainThreadMarker;
+                    let ns_win: *mut std::ffi::c_void = win.ns_window()
+                        .map_err(|e| e.to_string())?;
+                    unsafe {
+                        let _mtm = MainThreadMarker::new().unwrap();
+                        let ns_window: &NSWindow = &*(ns_win as *const NSWindow);
+                        ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
+                        ns_window.setHasShadow(false);
+                    }
+                }
+            }
+            Ok(())
+        })
         // 主窗口关闭 → 杀 mpv + 退出 app（macOS 默认只关窗口不退出）
         .on_window_event(|window, event| {
             if window.label() == "main" {
@@ -79,6 +99,7 @@ pub fn run() {
             commands::get_song_comments,
             commands::create_playlist,
             commands::add_tracks_to_playlist,
+            commands::remove_tracks_from_playlist,
             commands::play_song,
             commands::pause,
             commands::resume,

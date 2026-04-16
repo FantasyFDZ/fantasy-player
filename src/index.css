@@ -28,12 +28,10 @@ body,
 }
 
 html {
-  background: var(--theme-bg, #0b0d11);
+  background: transparent;
   color: var(--theme-text, #e6e6e6);
   font-family: var(--font-ui);
-  transition:
-    background var(--theme-transition),
-    color var(--theme-transition);
+  transition: color var(--theme-transition);
 }
 
 body {

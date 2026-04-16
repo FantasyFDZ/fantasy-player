@@ -289,6 +289,27 @@ async function addTracksToPlaylist({ playlistId, trackIds, cookie = "" }) {
   return { ok: true, code };
 }
 
+async function removeTracksFromPlaylist({ playlistId, trackIds, cookie = "" }) {
+  const pid = toStr(playlistId);
+  if (!pid) throw new Error("missing playlistId");
+  const ids = pickArray(trackIds);
+  if (ids.length === 0) throw new Error("trackIds is empty");
+  const resp = await api.playlist_tracks({
+    op: "del",
+    pid,
+    tracks: ids.map((id) => toStr(id)).join(","),
+    cookie,
+  });
+  const body = resp?.body || {};
+  const code = toNum(body?.code || body?.status, 0);
+  if (code !== 200 && code !== 0) {
+    throw new Error(
+      `移除歌曲失败: code=${code}, msg=${toStr(body?.message || body?.msg)}`,
+    );
+  }
+  return { ok: true, code };
+}
+
 // ---- dispatch --------------------------------------------------------------
 
 const COMMANDS = {
@@ -306,6 +327,7 @@ const COMMANDS = {
   song_comments: songComments,
   create_playlist: createPlaylist,
   add_tracks_to_playlist: addTracksToPlaylist,
+  remove_tracks_from_playlist: removeTracksFromPlaylist,
 };
 
 async function main() {

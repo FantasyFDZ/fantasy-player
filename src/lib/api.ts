@@ -289,6 +289,13 @@ export const api = {
     );
   },
 
+  async removeTracksFromPlaylist(playlistId: string, trackIds: string[]) {
+    return invoke<{ ok: boolean; code: number }>(
+      "remove_tracks_from_playlist",
+      { playlistId, trackIds },
+    );
+  },
+
   // ---- playback ----
   async playSong(song: Song) {
     return invoke<PlaybackStatus>("play_song", { song });

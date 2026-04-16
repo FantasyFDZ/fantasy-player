@@ -12,10 +12,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Gramophone } from "@/core/Gramophone/Gramophone";
+import { emit } from "@tauri-apps/api/event";
+import { VinylDisc } from "@/core/VinylDisc/VinylDisc";
+import { useAlbumColor } from "@/core/VinylDisc/useAlbumColor";
+import { applyDynamicTheme } from "@/themes/dynamicTheme";
 import { Lyrics } from "@/core/Lyrics/Lyrics";
 import { ThemeProvider } from "@/core/ThemeProvider/ThemeProvider";
-import { LightLayer } from "@/core/ThemeProvider/LightLayer";
 import { PanelProvider, usePanels } from "@/core/PanelManager/PanelProvider";
 import { PanelWindow } from "@/core/PanelManager/PanelWindow";
 import { PlayBar } from "@/components/PlayBar";
@@ -58,6 +60,24 @@ function Shell() {
   const [playing, setPlaying] = useState(false);
   const [overlay, setOverlay] = useState<Overlay>("none");
   const panels = usePanels();
+
+  // 从封面提取主色 → 驱动全局配色 + 广播给面板窗口
+  const albumColor = useAlbumColor(currentSong?.cover_url);
+  useEffect(() => {
+    applyDynamicTheme(albumColor);
+    emit("melody://album-color", albumColor);
+  }, [albumColor]);
+
+  // 面板窗口打开时主动请求当前颜色 → 回复
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    import("@tauri-apps/api/event").then(({ listen }) => {
+      listen("melody://album-color-request", () => {
+        emit("melody://album-color-reply", albumColor);
+      }).then((fn) => { unlisten = fn; });
+    });
+    return () => { unlisten?.(); };
+  });
 
   // 队列预分析：后台提前提取音频特征，播放时只需等 LLM 文字生成
   useQueuePreAnalyze();
@@ -112,9 +132,6 @@ function Shell() {
         background: "var(--theme-bg)",
       }}
     >
-      {/* 光线层 —— 提到根层级覆盖整个主窗口（header/main/playbar 全覆盖） */}
-      <LightLayer />
-
       {/* 顶部栏 */}
       <header
           className="relative flex items-center justify-between px-8 py-3"
@@ -186,27 +203,26 @@ function Shell() {
         {/* scene —— 整个主舞台 */}
         <main
           className="relative flex-1 overflow-hidden"
-          style={{ padding: "20px 20px 20px 20px" }}
+          style={{ padding: "20px" }}
         >
-          <div className="relative h-full" style={{ zIndex: 3 }}>
+          <div
+            className="relative flex h-full"
+            style={{ zIndex: 3 }}
+          >
+            {/* 左侧：唱片 */}
             <div
-              className="absolute flex items-center"
-              style={{
-                left: "calc(11.694% - 20px)",
-                top: 0,
-                bottom: 0,
-              }}
+              className="flex items-center justify-center"
+              style={{ width: "55%" }}
             >
-              <Gramophone coverUrl={currentSong?.cover_url} playing={playing} />
+              <VinylDisc
+                coverUrl={currentSong?.cover_url}
+                playing={playing}
+              />
             </div>
+            {/* 右侧：歌词 */}
             <div
-              className="absolute flex flex-col"
-              style={{
-                left: "calc(60.045% - 20px)",
-                width: "37.209%",
-                top: 0,
-                bottom: 0,
-              }}
+              className="flex flex-col"
+              style={{ width: "45%", paddingLeft: "20px" }}
             >
               <Lyrics song={currentSong} />
             </div>
@@ -332,9 +348,7 @@ function Overlay({
       className="absolute inset-0 flex items-center justify-center"
       style={{
         zIndex: 30,
-        background: "rgba(0,0,0,0.4)",
-        backdropFilter: "blur(16px)",
-        WebkitBackdropFilter: "blur(16px)",
+        background: "var(--theme-bg)",
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -345,11 +359,8 @@ function Overlay({
         style={{
           width: "580px",
           maxWidth: "calc(100% - 4rem)",
-          maxHeight: "72vh",
+          maxHeight: "80vh",
           padding: "28px",
-          borderRadius: "16px",
-          background: "var(--theme-cabinet-bg)",
-          boxShadow: "var(--theme-cabinet-shadow)",
         }}
       >
         <button
@@ -362,9 +373,9 @@ function Overlay({
             width: "26px",
             height: "26px",
             borderRadius: "50%",
-            background: "rgba(0,0,0,0.3)",
-            border: "1px solid rgba(0,0,0,0.4)",
-            color: "var(--theme-label)",
+            background: "rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.06)",
+            color: "var(--theme-text-muted)",
             fontSize: "11px",
             cursor: "pointer",
           }}
@@ -372,7 +383,7 @@ function Overlay({
         >
           ✕
         </button>
-        <div style={{ height: "60vh", overflow: "hidden" }}>{children}</div>
+        <div style={{ height: "70vh", overflow: "hidden" }}>{children}</div>
       </div>
     </div>
   );

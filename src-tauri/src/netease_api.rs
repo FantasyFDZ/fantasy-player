@@ -296,6 +296,18 @@ pub fn add_tracks_to_playlist(
     Ok(serde_json::from_value(data)?)
 }
 
+pub fn remove_tracks_from_playlist(
+    playlist_id: &str,
+    track_ids: &[String],
+    cookie: &str,
+) -> Result<PlaylistTrackAddResult, NeteaseError> {
+    let data = invoke(
+        "remove_tracks_from_playlist",
+        json!({ "playlistId": playlist_id, "trackIds": track_ids, "cookie": cookie }),
+    )?;
+    Ok(serde_json::from_value(data)?)
+}
+
 pub fn song_comments(
     id: &str,
     cookie: &str,

@@ -1,14 +1,9 @@
 // 底部播放条。
 //
 // 布局（从左到右）：
-//   [time] [progress bar] [time] | [prev][play][next] | [vol btn popover] | [mode btn] | [cover][title/artist → queue]
-//
-// 设计原则：
-//   - 不使用斜体
-//   - 主题色驱动（--theme-playbar-*）
-//   - 半透明毛玻璃背景
+//   [time] [progress bar] [time] | [prev][play][next] | [vol] | [mode] | [cover][title/artist → queue] [♥]
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   onPlaybackUpdate,
@@ -34,11 +29,58 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
   const [mode, setMode] = useState<PlayMode>("sequential");
   const [volOpen, setVolOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
-  // 包含 popup + 触发按钮 —— 用来判定"点击外部关闭"
+  const [liked, setLiked] = useState(false);
+  const [liking, setLiking] = useState(false);
+  const [favPlaylistId, setFavPlaylistId] = useState<string | null>(null);
+  const [likedSet, setLikedSet] = useState<Set<string>>(new Set());
   const queueWrapperRef = useRef<HTMLDivElement>(null);
 
-  // queue popup 的点击外部关闭：判定对象是 button+popup 的共同父容器，
-  // 这样点按钮自身不会被当成"外部"（避免 close 和 toggle 相互抵消）。
+  // 加载"我喜欢的"歌单 ID + 曲目列表（用于判断是否已收藏）
+  useEffect(() => {
+    api.getUserPlaylists().then((playlists) => {
+      const fav = playlists.find((pl) => pl.special_type === 5);
+      if (fav) {
+        setFavPlaylistId(fav.id);
+        api.getPlaylistDetail(fav.id).then((detail) => {
+          setLikedSet(new Set(detail.tracks.map((t) => t.id)));
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+  }, []);
+
+  // 当前歌变化时检查是否已收藏
+  useEffect(() => {
+    if (currentSong) {
+      setLiked(likedSet.has(currentSong.id));
+    } else {
+      setLiked(false);
+    }
+  }, [currentSong?.id, likedSet]);
+
+  const toggleLike = useCallback(async () => {
+    if (!currentSong || !favPlaylistId || liking) return;
+    setLiking(true);
+    try {
+      if (liked) {
+        await api.removeTracksFromPlaylist(favPlaylistId, [currentSong.id]);
+        setLikedSet((prev) => {
+          const next = new Set(prev);
+          next.delete(currentSong.id);
+          return next;
+        });
+        setLiked(false);
+      } else {
+        await api.addTracksToPlaylist(favPlaylistId, [currentSong.id]);
+        setLikedSet((prev) => new Set(prev).add(currentSong.id));
+        setLiked(true);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLiking(false);
+    }
+  }, [currentSong, favPlaylistId, liked, liking]);
+
   useEffect(() => {
     if (!queueOpen) return;
     const onDown = (e: MouseEvent) => {
@@ -46,7 +88,6 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
         setQueueOpen(false);
       }
     };
-    // 延后一 tick，避免开启的那次点击立刻被判为"外部"
     const timer = window.setTimeout(
       () => document.addEventListener("mousedown", onDown),
       0,
@@ -57,14 +98,6 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
     };
   }, [queueOpen]);
 
-  // StrictMode 安全的 Tauri 事件订阅。
-  //
-  // 关键细节：listen() 返回的 unlisten 是 **async** 的（在 .then 里才拿到），
-  // 而 StrictMode 的 cleanup 是同步的。如果 cleanup 在 .then resolve 之前跑，
-  // 旧监听器就会泄漏 —— 导致 onTrackEnded 被触发两次，播放器连跳两首。
-  //
-  // 解法：用 cancelled flag 作「已被清理」标记。.then 到达时如果 cancelled
-  // 已为 true，立刻解除监听；handler 里也先检查 cancelled。
   useEffect(() => {
     let cancelled = false;
     const cleanups: Array<() => void> = [];
@@ -115,9 +148,6 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
     api.queueSetMode(next).catch(() => {});
   };
 
-  const modeGlyph =
-    mode === "sequential" ? "↻" : mode === "shuffle" ? "⇌" : "①";
-
   const jumpToQueueSong = (song: Song) => {
     api
       .queueSnapshot()
@@ -127,7 +157,6 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
         return api.queueReplace(snap.tracks, idx);
       })
       .then(() => {
-        // queueReplace 成功后才同步 UI，保持显示 = 实际播放
         onSongChange(song);
         setQueueOpen(false);
       })
@@ -138,25 +167,22 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
 
   return (
     <div
-      className="relative flex items-center"
+      className="relative"
       style={{
-        padding: "10px 30px",
-        gap: "14px",
+        padding: "4px 30px 10px",
         zIndex: 5,
-        // 背景透明，让主窗口整体渐变透出（顶底统一色彩）
         background: "transparent",
       }}
     >
-      {/* 时间 · 进度条 · 时间 */}
-      <TimeLabel text={formatTime(status.position)} />
-      <ProgressBar
-        value={progressPercent}
-        onSeek={(pct) => api.seek(pct * status.duration).catch(() => {})}
-      />
-      <TimeLabel text={formatTime(status.duration)} />
-
-      {/* 主控（上一首 / 播放 / 下一首） */}
-      <div className="flex items-center" style={{ gap: "14px" }}>
+      {/* 上层：播放控制 —— 对齐唱片中心（左侧 55% 区域的中心 = 27.5%） */}
+      <div
+        className="flex items-center justify-center"
+        style={{
+          width: "55%",
+          marginBottom: "6px",
+          gap: "20px",
+        }}
+      >
         <IconButton
           glyph="⏮"
           onClick={() =>
@@ -180,46 +206,81 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
         />
       </div>
 
-      {/* 音量（按钮 + hover popover 滑块） */}
-      <VolumeControl
-        volume={status.volume}
-        open={volOpen}
-        onToggle={() => setVolOpen((v) => !v)}
-        onChange={(v) => api.setVolume(v).catch(() => {})}
-      />
+      {/* 下层：进度条（占唱片区宽度） + 右侧功能按钮 */}
+      <div className="flex w-full items-center" style={{ gap: "14px" }}>
+        {/* 进度条区域 —— 宽度 = 唱片区 55% */}
+        <div
+          className="flex items-center"
+          style={{ width: "55%", gap: "8px", flexShrink: 0 }}
+        >
+          <TimeLabel text={formatTime(status.position)} />
+          <ProgressBar
+            value={progressPercent}
+            onSeek={(pct) => api.seek(pct * status.duration).catch(() => {})}
+          />
+          <TimeLabel text={formatTime(status.duration)} />
+        </div>
 
-      {/* 模式切换 */}
-      <button
-        type="button"
-        onClick={cycleMode}
-        className="flex items-center justify-center"
-        style={{
-          width: "26px",
-          height: "26px",
-          borderRadius: "50%",
-          background: "transparent",
-          color: "var(--theme-playbar-icon)",
-          fontSize: "14px",
-          border: "1px solid rgba(255,255,255,0.08)",
-          cursor: "pointer",
-          padding: 0,
-        }}
-        aria-label={`Mode: ${mode}`}
-      >
-        {modeGlyph}
-      </button>
+        {/* 音量 */}
+        <VolumeControl
+          volume={status.volume}
+          open={volOpen}
+          onToggle={() => setVolOpen((v) => !v)}
+          onChange={(v) => api.setVolume(v).catch(() => {})}
+        />
 
-      {/* 右侧：歌曲信息按钮 + 队列 popup */}
-      <div className="relative" ref={queueWrapperRef}>
-        <QueuePopup
-          open={queueOpen}
-          onJump={jumpToQueueSong}
-          onAfterClear={() => setQueueOpen(false)}
-        />
-        <SongInfoButton
-          song={currentSong}
-          onClick={() => setQueueOpen((v) => !v)}
-        />
+        {/* 模式切换 */}
+        <button
+          type="button"
+          onClick={cycleMode}
+          className="flex items-center justify-center"
+          style={{
+            width: "28px",
+            height: "22px",
+            background: "transparent",
+            color: "var(--theme-playbar-icon)",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+            opacity: 0.7,
+          }}
+          aria-label={`Mode: ${mode}`}
+        >
+          <ModeIcon mode={mode} />
+        </button>
+
+        {/* 收藏按钮 */}
+        <button
+          type="button"
+          onClick={toggleLike}
+          className="flex items-center justify-center"
+          style={{
+            width: "22px",
+            height: "22px",
+            background: "transparent",
+            border: "none",
+            cursor: currentSong ? "pointer" : "default",
+            color: "var(--theme-playbar-icon)",
+            padding: 0,
+            opacity: currentSong ? 0.7 : 0.3,
+          }}
+          aria-label={liked ? "取消收藏" : "收藏"}
+        >
+          <HeartIcon liked={liked} />
+        </button>
+
+        {/* 歌曲信息 + 队列 */}
+        <div className="relative" ref={queueWrapperRef} style={{ marginLeft: "4px" }}>
+          <QueuePopup
+            open={queueOpen}
+            onJump={jumpToQueueSong}
+            onAfterClear={() => setQueueOpen(false)}
+          />
+          <SongInfoButton
+            song={currentSong}
+            onClick={() => setQueueOpen((v) => !v)}
+          />
+        </div>
       </div>
     </div>
   );
@@ -227,14 +288,27 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
 
 // ---- subcomponents ---------------------------------------------------------
 
+function HeartIcon({ liked }: { liked: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path
+        d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
+        fill={liked ? "#e74c5e" : "none"}
+        stroke={liked ? "#e74c5e" : "currentColor"}
+        style={{ transition: "fill 300ms ease, stroke 300ms ease" }}
+      />
+    </svg>
+  );
+}
+
 function TimeLabel({ text }: { text: string }) {
   return (
     <span
       className="font-mono"
       style={{
-        fontSize: "10px",
+        fontSize: "13px",
         color: "var(--theme-playbar-text)",
-        minWidth: "28px",
+        minWidth: "34px",
         textAlign: "center",
       }}
     >
@@ -251,8 +325,6 @@ function ProgressBar({
   onSeek: (pct: number) => void;
 }) {
   const barRef = useRef<HTMLDivElement>(null);
-  // 拖拽中的"本地进度"（0-100），覆盖 value 使滑动时进度条跟随鼠标；
-  // 松手后清空，交还给来自后端的 value。
   const [dragValue, setDragValue] = useState<number | null>(null);
   const dragging = dragValue !== null;
   const displayValue = dragValue ?? value;
@@ -283,8 +355,9 @@ function ProgressBar({
   return (
     <div
       ref={barRef}
-      className="group relative flex-1"
+      className="group relative"
       style={{
+        flex: "1 1 0",
         height: "12px",
         display: "flex",
         alignItems: "center",
@@ -293,7 +366,6 @@ function ProgressBar({
       }}
       onMouseDown={handleMouseDown}
     >
-      {/* 轨道 */}
       <div
         style={{
           position: "relative",
@@ -314,7 +386,6 @@ function ProgressBar({
           }}
         />
       </div>
-      {/* 拖拽小球：hover / 拖拽时显示 */}
       <div
         className="pointer-events-none group-hover:opacity-100"
         style={{
@@ -350,7 +421,7 @@ function IconButton({
       onClick={onClick}
       aria-label={label}
       style={{
-        fontSize: "13px",
+        fontSize: "18px",
         color: "var(--theme-playbar-icon)",
         background: "transparent",
         border: "none",
@@ -376,13 +447,13 @@ function PlayButton({
       onClick={onClick}
       className="flex items-center justify-center"
       style={{
-        width: "28px",
-        height: "28px",
+        width: "34px",
+        height: "34px",
         borderRadius: "50%",
         background: "var(--theme-playbar-btn-bg)",
         border: "var(--theme-playbar-btn-border, none)",
         color: "var(--theme-playbar-btn-color)",
-        fontSize: "10px",
+        fontSize: "15px",
         cursor: "pointer",
         padding: 0,
         boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
@@ -393,6 +464,52 @@ function PlayButton({
         {isPlaying ? "⏸" : "▶"}
       </span>
     </button>
+  );
+}
+
+function VolumeIcon({ volume }: { volume: number }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none" />
+      {volume >= 5 && (
+        <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+      )}
+      {volume >= 50 && (
+        <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+      )}
+      {volume < 5 && (
+        <>
+          <line x1="23" y1="9" x2="17" y2="15" />
+          <line x1="17" y1="9" x2="23" y2="15" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+function ModeIcon({ mode }: { mode: string }) {
+  if (mode === "shuffle") {
+    return (
+      <svg width="22" height="16" viewBox="0 0 32 28" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M2 6h4c3 0 5 2 7 8s4 8 7 8h6" />
+        <path d="M2 22h4c3 0 5-2 7-8s4-8 7-8h6" />
+      </svg>
+    );
+  }
+  if (mode === "repeat_one") {
+    return (
+      <svg width="22" height="16" viewBox="0 0 28 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 11V9a4 4 0 0 1 4-4h16" />
+        <path d="M23 13v2a4 4 0 0 1-4 4H3" />
+        <text x="13" y="12" fontSize="9" fill="currentColor" stroke="none" fontWeight="bold" textAnchor="middle" dominantBaseline="central">1</text>
+      </svg>
+    );
+  }
+  return (
+    <svg width="22" height="16" viewBox="0 0 28 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 11V9a4 4 0 0 1 4-4h16" />
+      <path d="M23 13v2a4 4 0 0 1-4 4H3" />
+    </svg>
   );
 }
 
@@ -407,7 +524,6 @@ function VolumeControl({
   onToggle: () => void;
   onChange: (v: number) => void;
 }) {
-  const icon = volume < 5 ? "🔇" : volume < 50 ? "🔈" : "🔊";
   return (
     <div className="relative flex items-center">
       <button
@@ -415,19 +531,18 @@ function VolumeControl({
         onClick={onToggle}
         className="flex items-center justify-center"
         style={{
-          width: "26px",
-          height: "26px",
+          width: "20px",
+          height: "20px",
           background: "transparent",
           border: "none",
           cursor: "pointer",
           color: "var(--theme-playbar-icon)",
-          fontSize: "12px",
           padding: 0,
-          lineHeight: 1,
+          opacity: 0.7,
         }}
         aria-label="Volume"
       >
-        {icon}
+        <VolumeIcon volume={volume} />
       </button>
       {open && (
         <div
@@ -454,7 +569,6 @@ function VolumeControl({
             value={volume}
             onChange={(e) => onChange(Number(e.target.value))}
             style={{
-              // 竖直音量滑块
               writingMode: "vertical-lr" as never,
               direction: "rtl",
               width: "24px",
@@ -484,7 +598,7 @@ function SongInfoButton({
         padding: "4px 8px 4px 4px",
         borderRadius: "8px",
         background: "transparent",
-        border: "1px solid rgba(255,255,255,0.06)",
+        border: "none",
         cursor: "pointer",
         minWidth: "200px",
         maxWidth: "260px",

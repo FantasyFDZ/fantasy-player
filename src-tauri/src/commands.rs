@@ -169,6 +169,21 @@ pub async fn add_tracks_to_playlist(
     .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn remove_tracks_from_playlist(
+    auth: State<'_, AuthState>,
+    playlist_id: String,
+    track_ids: Vec<String>,
+) -> Result<netease_api::PlaylistTrackAddResult, String> {
+    let cookie = auth.cookie();
+    tauri::async_runtime::spawn_blocking(move || {
+        netease_api::remove_tracks_from_playlist(&playlist_id, &track_ids, &cookie)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
 // ---- playback --------------------------------------------------------------
 
 #[tauri::command]
@@ -464,8 +479,6 @@ pub async fn panel_open(
         .min_inner_size(380.0, 500.0)
         .resizable(true)
         .decorations(false)
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true)
         .parent(&main_window)
         .map_err(|e| e.to_string())?;
 
@@ -477,6 +490,36 @@ pub async fn panel_open(
     }
 
     let window = builder.build().map_err(|e: tauri::Error| e.to_string())?;
+
+    // macOS：面板窗口也设为透明背景，去掉白色边框
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSColor, NSWindow};
+        use objc2_foundation::MainThreadMarker;
+        if let Ok(ns_win) = window.ns_window() {
+            let ns_win_ptr = ns_win as *mut std::ffi::c_void;
+            // 如果当前在主线程直接执行，否则跳过（窗口创建通常在主线程）
+            if let Some(_mtm) = MainThreadMarker::new() {
+                unsafe {
+                    let ns_window: &NSWindow = &*(ns_win_ptr as *const NSWindow);
+                    ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
+                    ns_window.setHasShadow(false);
+                }
+            } else {
+                // 非主线程 —— 通过 run_on_main_thread 调度
+                let win_clone = window.clone();
+                let _ = window.run_on_main_thread(move || {
+                    if let Ok(ns_win) = win_clone.ns_window() {
+                        unsafe {
+                            let ns_window: &NSWindow = &*(ns_win as *const NSWindow);
+                            ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
+                            ns_window.setHasShadow(false);
+                        }
+                    }
+                });
+            }
+        }
+    }
 
     // 持久化 visible=true
     let _ = db.panel_layout_upsert(&PanelLayoutRow {
