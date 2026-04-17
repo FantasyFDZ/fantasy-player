@@ -47,7 +47,21 @@ export function CommentsSection({ song }: Props) {
   if (!song) return null;
   if (loading) return <div style={dimStyle}>...</div>;
   if (error) return null;
-  if (!comment) return null;
+  if (!comment) {
+    return (
+      <div
+        style={{
+          ...dimStyle,
+          textAlign: "left",
+          fontFamily: "var(--font-display)",
+          letterSpacing: "0.08em",
+          opacity: 0.45,
+        }}
+      >
+        暂无热评
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col" style={{ gap: 8 }}>

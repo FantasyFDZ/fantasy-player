@@ -11,16 +11,24 @@ import type { AudioFeatures } from "@/lib/api";
  *  4) Tier 2 启发式（danceability + 调式 + 能量）
  */
 export function pickStyleLabel(f: AudioFeatures): string {
+  return shortenStyle(pickStyleLabelFull(f));
+}
+
+/**
+ * 与 pickStyleLabel 同来源，但返回未 shorten 的原始字符串，
+ * 供悬浮 tooltip 展示完整风格（例如 "Electronic---House---Deep House"）。
+ */
+export function pickStyleLabelFull(f: AudioFeatures): string {
   if (
     f.llm_genre &&
     f.llm_genre_confidence &&
     f.llm_genre_confidence !== "unknown" &&
     f.llm_genre_confidence !== "low"
   ) {
-    return shortenStyle(f.llm_genre);
+    return f.llm_genre;
   }
   if (f.genre_tags && f.genre_tags.length > 0) {
-    return shortenStyle(f.genre_tags[0]);
+    return f.genre_tags[0];
   }
   if (f.mood_tags && f.mood_tags.length > 0) {
     return moodTagToZh(f.mood_tags[0]);
@@ -39,9 +47,10 @@ export function pickStyleLabel(f: AudioFeatures): string {
 }
 
 export function shortenStyle(raw: string): string {
-  // genre_discogs400 标签形如 "Electronic---House"
+  // genre_discogs400 标签形如 "Electronic---House"，只取尾段
+  // 长度截断交给 CSS text-overflow: ellipsis 处理（根据容器实际宽度）
   const tail = raw.split("---").pop() ?? raw;
-  return tail.length > 24 ? tail.slice(0, 24) + "…" : tail;
+  return tail;
 }
 
 export function moodTagToZh(tag: string): string {

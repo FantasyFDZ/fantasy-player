@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Melody</title>
+    <!-- 不带 Referer 请求封面/外链图片 —— Tauri 生产模式下 WKWebView
+         发送的 Referer 为 tauri://localhost 会被部分 CDN 拒绝。 -->
+    <meta name="referrer" content="no-referrer" />
+    <title>Fantasy Player</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

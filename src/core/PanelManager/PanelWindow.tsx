@@ -21,28 +21,29 @@ export function PanelWindow({ panelId }: Props) {
   const plugin = PANEL_PLUGINS.find((p) => p.id === panelId);
   const [song, setSong] = useState<Song | null>(null);
 
-  // 动态配色 —— 从主窗口广播接收 + 启动时主动请求一次
+  // 动态配色
+  // 1. 先试 localStorage 快速路径（同 origin 时可避免首帧蓝色闪烁）
+  // 2. 主动 emit 请求，主窗口会立刻 reply 当前颜色（兜底 —— Tauri 的
+  //    多 webview window 并不保证共享 localStorage）
+  // 3. 持续 listen 主窗口广播的颜色更新
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let unlistenReply: (() => void) | undefined;
+    try {
+      const raw = localStorage.getItem("melody.album-color");
+      if (raw) applyDynamicTheme(JSON.parse(raw) as AlbumColor);
+    } catch {}
 
-    // 监听主窗口广播的颜色
+    const unlisteners: Array<() => void> = [];
     listen<AlbumColor>("melody://album-color", (event) => {
       applyDynamicTheme(event.payload);
-    }).then((fn) => { unlisten = fn; });
-
-    // 监听主窗口对请求的回复
+    }).then((fn) => unlisteners.push(fn));
     listen<AlbumColor>("melody://album-color-reply", (event) => {
       applyDynamicTheme(event.payload);
-    }).then((fn) => { unlistenReply = fn; });
+    }).then((fn) => unlisteners.push(fn));
 
-    // 主动请求当前颜色（解决重新打开时初始蓝色问题）
-    emit("melody://album-color-request");
+    // 等 listener 挂好再 emit 请求（reply 用的是新频道，不会被自己当回声吃掉）
+    window.setTimeout(() => emit("melody://album-color-request"), 50);
 
-    return () => {
-      unlisten?.();
-      unlistenReply?.();
-    };
+    return () => unlisteners.forEach((fn) => fn());
   }, []);
 
   // 窗口 resize / move → 500ms 去抖后持久化几何

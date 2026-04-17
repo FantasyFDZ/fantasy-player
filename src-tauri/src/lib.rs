@@ -33,6 +33,33 @@ pub fn run() {
     let _ = db.seed_providers_if_empty();
     let llm = LlmClient::new();
 
+    // SIGINT/SIGTERM/SIGHUP → 杀 mpv 再退出。
+    // 覆盖 Ctrl+C（dev 模式下最常见的"退出姿势"）、macOS 系统 shutdown、
+    // 以及 Tauri event loop 没来得及跑 ExitRequested 的其它异常退出路径。
+    #[cfg(unix)]
+    tauri::async_runtime::spawn(async {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigint = match signal(SignalKind::interrupt()) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let mut sigterm = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let mut sighup = match signal(SignalKind::hangup()) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        tokio::select! {
+            _ = sigint.recv() => {},
+            _ = sigterm.recv() => {},
+            _ = sighup.recv() => {},
+        }
+        player::kill_mpv_child();
+        std::process::exit(0);
+    });
+
     // 启动时做一次 cookie 刷新（非阻塞——失败不影响启动）。
     let auth_for_refresh = auth.clone();
     tauri::async_runtime::spawn(async move {

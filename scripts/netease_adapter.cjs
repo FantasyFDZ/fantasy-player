@@ -22,6 +22,13 @@ function toStr(value) {
   return String(value).trim();
 }
 
+// macOS ATS 默认禁止 http，封面 CDN 有时返回 http 链接 —— 统一升级到 https。
+function httpsify(url) {
+  const s = toStr(url);
+  if (s.startsWith("http://")) return "https://" + s.slice(7);
+  return s;
+}
+
 function toNum(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -57,7 +64,7 @@ function normalizeSong(record) {
     name: toStr(record?.name),
     artist,
     album: toStr(firstDefined(album?.name, record?.albumName)),
-    cover_url: toStr(
+    cover_url: httpsify(
       firstDefined(
         album?.picUrl,
         album?.coverImgUrl,
@@ -80,7 +87,7 @@ function normalizePlaylist(record) {
   return {
     id,
     name: toStr(record?.name),
-    cover_url: toStr(firstDefined(record?.coverImgUrl, record?.picUrl)),
+    cover_url: httpsify(firstDefined(record?.coverImgUrl, record?.picUrl)),
     track_count: toNum(firstDefined(record?.trackCount, record?.songCount), 0),
     description: toStr(record?.description),
     creator_name: toStr(record?.creator?.nickname),
@@ -191,7 +198,7 @@ async function loginStatus({ cookie = "" }) {
       user: {
         user_id: toStr(profile?.userId),
         nickname: toStr(profile?.nickname),
-        avatar_url: toStr(profile?.avatarUrl),
+        avatar_url: httpsify(profile?.avatarUrl),
         vip_type: toNum(profile?.vipType, 0),
       },
     };
@@ -230,24 +237,49 @@ async function playlistDetail({ id, cookie = "", limit = 500 }) {
 }
 
 async function songComments({ id, cookie = "", limit = 10 }) {
-  // /comment/music 热评接口，按点赞数排序
-  const resp = await api.comment_music({
-    id: toStr(id),
-    limit,
-    cookie,
-  });
-  const body = resp?.body || {};
-  // 优先取 hotComments（热评），没有则降级到 comments
-  const raw = pickArray(body?.hotComments, body?.comments).slice(0, limit);
-  return raw.map((c) => ({
+  const sid = toStr(id);
+  const mapOne = (c) => ({
     comment_id: toStr(firstDefined(c?.commentId, c?.id)),
-    user_id: toStr(c?.user?.userId),
-    nickname: toStr(c?.user?.nickname),
-    avatar_url: toStr(c?.user?.avatarUrl),
+    user_id: toStr(firstDefined(c?.user?.userId, c?.userId)),
+    nickname: toStr(firstDefined(c?.user?.nickname, c?.nickname)),
+    avatar_url: httpsify(firstDefined(c?.user?.avatarUrl, c?.avatarUrl)),
     content: toStr(c?.content),
-    liked_count: toNum(c?.likedCount, 0),
+    liked_count: toNum(firstDefined(c?.likedCount, c?.likeCount), 0),
     time_ms: toNum(c?.time, 0),
-  }));
+  });
+
+  // 1) 先试 /comment/music（老接口，大部分歌能直接拿到热评）
+  try {
+    const resp = await api.comment_music({ id: sid, limit, cookie });
+    const body = resp?.body || {};
+    const raw = pickArray(body?.hotComments, body?.comments);
+    if (raw.length > 0) return raw.slice(0, limit).map(mapOne);
+  } catch {
+    /* 接口偶发异常 —— 走兜底 */
+  }
+
+  // 2) 兜底：/comment/new，type=0（歌曲），sortType=2（按点赞数），cursor=-1
+  //    老接口对冷门/新歌/海外版权歌返回空数组，这套新接口能兜住绝大多数
+  try {
+    const resp2 = await api.comment_new({
+      type: 0,
+      id: sid,
+      sortType: 2,
+      pageSize: Math.max(limit, 10),
+      pageNo: 1,
+      cursor: "-1",
+      cookie,
+    });
+    const body2 = resp2?.body || {};
+    const raw2 = pickArray(
+      body2?.data?.comments,
+      body2?.comments,
+      body2?.hotComments,
+    );
+    return raw2.slice(0, limit).map(mapOne);
+  } catch {
+    return [];
+  }
 }
 
 // ---- playlist write ops -----------------------------------------------------

@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type AudioFeatures } from "@/lib/api";
-import { pickStyleLabel } from "./metricsHelpers";
+import { pickStyleLabel, pickStyleLabelFull } from "./metricsHelpers";
 
 interface Props {
   features: AudioFeatures | null;
@@ -17,6 +17,7 @@ interface Props {
 
 export function MetricsStrip({ features, songId, onFeaturesUpdate }: Props) {
   const genre = features ? pickStyleLabel(features) : "—";
+  const genreFull = features ? pickStyleLabelFull(features) : "—";
   const bpm = features ? features.bpm.toFixed(0) : "—";
   const key = features ? features.key || "—" : "—";
   const energy = features ? `${Math.round(features.energy * 100)}%` : "—";
@@ -63,7 +64,7 @@ export function MetricsStrip({ features, songId, onFeaturesUpdate }: Props) {
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
           }}
-          title={genre}
+          title={genreFull}
         >
           {genre}
         </span>

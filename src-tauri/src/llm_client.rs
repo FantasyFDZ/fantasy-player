@@ -293,18 +293,32 @@ impl LlmClient {
         }
 
         let v: serde_json::Value = serde_json::from_str(&text)?;
-        let content = v
+        let message = v
             .get("choices")
             .and_then(|c| c.get(0))
             .and_then(|c| c.get("message"))
-            .and_then(|m| m.get("content"))
-            .and_then(|s| s.as_str())
             .ok_or_else(|| {
                 LlmError::BadResponse(format!(
-                    "OpenAI 响应缺少 choices[0].message.content: {text}"
+                    "OpenAI 响应缺少 choices[0].message: {text}"
                 ))
-            })?
-            .to_string();
+            })?;
+        let content_raw = message.get("content").and_then(|s| s.as_str()).unwrap_or("");
+        // Reasoning 模型的思考过程在 message.reasoning_content，用 <think>
+        // 标签包起来拼到 content 前（前端已剥离 <think>...</think>）。
+        let reasoning = message
+            .get("reasoning_content")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+        let content = if reasoning.is_empty() {
+            content_raw.to_string()
+        } else {
+            format!("<think>{reasoning}</think>\n{content_raw}")
+        };
+        if content.is_empty() {
+            return Err(LlmError::BadResponse(format!(
+                "OpenAI 响应 content 和 reasoning_content 都为空: {text}"
+            )));
+        }
 
         let model = v
             .get("model")
@@ -462,6 +476,24 @@ impl LlmClient {
         let mut accumulated = String::new();
         let mut final_usage: Option<LlmUsage> = None;
         let mut final_model = req.model.clone();
+        // Reasoning 模型（MiMo / DeepSeek-R1 等）会把思考过程写进
+        // delta.reasoning_content，正式答案才进 delta.content。把思考流
+        // 用 <think>…</think> 包起来串到 accumulated，前端已有剥离逻辑，
+        // 既不污染展示，又能让用户流式看到"在思考"。
+        let mut in_reasoning = false;
+
+        let mut emit = |text: &str, acc: &mut String| {
+            if text.is_empty() {
+                return;
+            }
+            acc.push_str(text);
+            sink.on_chunk(&LlmStreamChunk {
+                request_id: request_id.to_string(),
+                delta: text.to_string(),
+                done: false,
+                usage: None,
+            });
+        };
 
         while let Some(chunk) = stream.next().await {
             let bytes = chunk?;
@@ -481,22 +513,31 @@ impl LlmClient {
                 let Ok(val) = serde_json::from_str::<serde_json::Value>(data) else {
                     continue;
                 };
-                if let Some(delta) = val
+                let delta_obj = val
                     .get("choices")
                     .and_then(|c| c.get(0))
-                    .and_then(|c| c.get("delta"))
+                    .and_then(|c| c.get("delta"));
+                let reasoning = delta_obj
+                    .and_then(|d| d.get("reasoning_content"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                let content_str = delta_obj
                     .and_then(|d| d.get("content"))
                     .and_then(|s| s.as_str())
-                {
-                    if !delta.is_empty() {
-                        accumulated.push_str(delta);
-                        sink.on_chunk(&LlmStreamChunk {
-                            request_id: request_id.to_string(),
-                            delta: delta.to_string(),
-                            done: false,
-                            usage: None,
-                        });
+                    .unwrap_or("");
+                if !reasoning.is_empty() {
+                    if !in_reasoning {
+                        emit("<think>", &mut accumulated);
+                        in_reasoning = true;
                     }
+                    emit(reasoning, &mut accumulated);
+                }
+                if !content_str.is_empty() {
+                    if in_reasoning {
+                        emit("</think>\n", &mut accumulated);
+                        in_reasoning = false;
+                    }
+                    emit(content_str, &mut accumulated);
                 }
                 if let Some(model) = val.get("model").and_then(|m| m.as_str()) {
                     final_model = model.to_string();
@@ -505,6 +546,11 @@ impl LlmClient {
                     final_usage = parse_openai_usage(usage);
                 }
             }
+        }
+        // 流结束但还在 reasoning 区间（模型被 max_tokens 截断，没输出 content）
+        // —— 补闭合标签，前端剥离后会显示"正文为空"而不是卡死的 <think>。
+        if in_reasoning {
+            emit("</think>", &mut accumulated);
         }
 
         sink.on_chunk(&LlmStreamChunk {

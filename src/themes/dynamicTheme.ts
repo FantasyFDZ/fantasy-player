@@ -40,8 +40,10 @@ export function applyDynamicTheme(color: AlbumColor) {
   const [h, rawS, rawL] = rgbToHsl(color.r, color.g, color.b);
   const s = Math.max(rawS, 0.20);
 
-  // 背景明度跟随封面明度：暗封面 → 0.08，亮封面 → 0.22
-  const bgL = 0.08 + rawL * 0.22;
+  // 背景明度跟随封面明度：暗封面 → 0.12，亮封面 → 0.34
+  // 基线从 0.08 抬到 0.12，范围拉大 —— 整体 UI 观感更亮,
+  // 默认 sky blue 下背景更清透
+  const bgL = 0.12 + rawL * 0.22;
   // 背景饱和度跟随封面
   const bgS = s * 0.85;
   // 背景是否偏亮（决定文本用深色还是浅色）

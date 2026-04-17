@@ -15,11 +15,12 @@ export interface AlbumColor {
   warm: boolean;
 }
 
+// 默认主色：明亮的 sky blue —— 没有封面 / 提取失败时的 UI 基调
 const NEUTRAL: AlbumColor = {
-  r: 140,
-  g: 140,
-  b: 150,
-  css: "rgb(140, 140, 150)",
+  r: 110,
+  g: 175,
+  b: 235,
+  css: "rgb(110, 175, 235)",
   warm: false,
 };
 

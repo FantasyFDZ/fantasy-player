@@ -779,7 +779,7 @@ export function SearchPanel({ onPlay, onAddToQueue }: Props) {
                 setShowNewPlaylistInput((v) => {
                   if (!v && !newPlaylistName) {
                     setNewPlaylistName(
-                      `Melody ${new Date().toLocaleDateString("zh-CN")}`,
+                      `Fantasy Player ${new Date().toLocaleDateString("zh-CN")}`,
                     );
                   }
                   return !v;

@@ -474,7 +474,7 @@ pub async fn panel_open(
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
     let mut builder = WebviewWindowBuilder::new(&app, panel_id.clone(), url)
-        .title(format!("Melody · {panel_id}"))
+        .title(format!("Fantasy Player · {panel_id}"))
         .inner_size(width, height)
         .min_inner_size(380.0, 500.0)
         .resizable(true)

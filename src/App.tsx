@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { emit } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { VinylDisc } from "@/core/VinylDisc/VinylDisc";
 import { useAlbumColor } from "@/core/VinylDisc/useAlbumColor";
 import { applyDynamicTheme } from "@/themes/dynamicTheme";
@@ -61,23 +61,27 @@ function Shell() {
   const [overlay, setOverlay] = useState<Overlay>("none");
   const panels = usePanels();
 
-  // 从封面提取主色 → 驱动全局配色 + 广播给面板窗口
+  // 从封面提取主色 → 驱动全局配色
+  // 同时持久化到 localStorage（同 origin 的 webview 可能共享，作为快速路径）
+  // 并 emit 事件给已打开的面板窗口。
   const albumColor = useAlbumColor(currentSong?.cover_url);
   useEffect(() => {
     applyDynamicTheme(albumColor);
+    try {
+      localStorage.setItem("melody.album-color", JSON.stringify(albumColor));
+    } catch {}
     emit("melody://album-color", albumColor);
   }, [albumColor]);
 
-  // 面板窗口打开时主动请求当前颜色 → 回复
+  // 面板窗口打开时主动请求当前颜色 —— 用最新 albumColor 回复，
+  // 保证面板首次打开不会卡在默认蓝色
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    import("@tauri-apps/api/event").then(({ listen }) => {
-      listen("melody://album-color-request", () => {
-        emit("melody://album-color-reply", albumColor);
-      }).then((fn) => { unlisten = fn; });
-    });
-    return () => { unlisten?.(); };
-  });
+    listen("melody://album-color-request", () => {
+      emit("melody://album-color-reply", albumColor);
+    }).then((fn) => { unlisten = fn; });
+    return () => unlisten?.();
+  }, [albumColor]);
 
   // 队列预分析：后台提前提取音频特征，播放时只需等 LLM 文字生成
   useQueuePreAnalyze();

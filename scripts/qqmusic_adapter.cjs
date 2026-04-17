@@ -22,6 +22,13 @@ function toStr(value) {
   return String(value).trim();
 }
 
+// macOS ATS 默认禁止 http，封面 CDN 有时返回 http —— 统一升级到 https。
+function httpsify(url) {
+  const s = toStr(url);
+  if (s.startsWith("http://")) return "https://" + s.slice(7);
+  return s;
+}
+
 function toNum(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -79,7 +86,7 @@ function normalizePlaylist(record) {
     disstid,
     name: toStr(firstDefined(record?.diss_name, record?.dissname, record?.name, record?.title)),
     song_cnt: toNum(firstDefined(record?.song_cnt, record?.songnum, record?.track_count), 0),
-    cover: toStr(firstDefined(record?.diss_cover, record?.logo, record?.imgurl, record?.picUrl)),
+    cover: httpsify(firstDefined(record?.diss_cover, record?.logo, record?.imgurl, record?.picUrl)),
   };
 }
 

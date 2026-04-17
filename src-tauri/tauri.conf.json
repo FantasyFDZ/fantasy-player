@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Melody",
+  "productName": "Fantasy Player",
   "version": "0.1.0",
-  "identifier": "com.melody.player",
+  "identifier": "com.fantasy.player",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Melody",
+        "title": "Fantasy Player",
         "width": 1050,
         "height": 700,
         "minWidth": 1050,
@@ -42,8 +42,8 @@
       "vendor/mpv/libs/*": "vendor/mpv/libs/",
       "vendor/node": "vendor/node",
       "vendor/scripts/*.cjs": "vendor/scripts/",
-      "vendor/node_modules/**/*": "vendor/node_modules/",
-      "vendor/python/**/*": "vendor/python/",
+      "vendor/node_modules": "vendor/node_modules/",
+      "vendor/python": "vendor/python/",
       "vendor/sidecar/*.py": "vendor/sidecar/",
       "vendor/sidecar/models/*": "vendor/sidecar/models/"
     },

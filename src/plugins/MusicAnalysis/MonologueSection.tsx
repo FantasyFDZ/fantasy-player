@@ -127,7 +127,9 @@ export function MonologueSection({ song, refreshKey = 0 }: Props) {
         },
       ],
       temperature: 0.85,
-      max_tokens: 800,
+      // 4000 是给 reasoning 模型（MiMo / R1 等）留的预算——纯输出模型
+      // 实际用不满，推理模型需要先思考再答，800 根本不够
+      max_tokens: 4000,
     }).then((resp) => {
       // 响应到达时 song 已经换了 —— useLLM 内部已经把过期结果扔掉，
       // 这里只负责日志别误导。切歌时 reset effect 会在主 effect 前
@@ -422,7 +424,12 @@ function AiTextDisplay(props: DisplayProps) {
     body = `生成失败：${llmError}`;
     bodyStyle.color = "rgba(255,180,160,0.9)";
   } else if (content) {
-    const cleaned = content.replace(/<think>[\s\S]*?<\/think>\s*/g, "").trim();
+    // 先剥完整的 <think>…</think>，再把流式中"还没闭合"的尾巴也剥掉，
+    // 否则 reasoning 模型（MiMo / R1）会在 UI 上实时漏出思考过程。
+    const cleaned = content
+      .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
+      .replace(/<think>[\s\S]*$/g, "")
+      .trim();
     if (cleaned.length > 0) {
       body = cleaned;
     } else {

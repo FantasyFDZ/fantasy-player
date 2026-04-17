@@ -224,15 +224,21 @@ impl PlayerState {
     }
 
     /// 彻底退出 mpv 子进程（app 关闭时调用）。
-    /// 先尝试 IPC quit 优雅退出，再强制 kill 兜底 —— IPC 是异步的，
+    /// 先尝试 IPC quit 优雅退出，再强制 kill 兜底 —— IPC 是异步的,
     /// 父进程可能在 mpv 处理前就 exit，导致 mpv 变孤儿继续播放。
     pub fn quit(&self) {
-        let _ = send_command(json!({ "command": ["quit"] }));
-        if let Ok(mut guard) = MPV_CHILD.lock() {
-            if let Some(mut child) = guard.take() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+        kill_mpv_child();
+    }
+}
+
+/// 给信号处理器用的 free function —— 不依赖 PlayerState 实例。
+/// SIGINT/SIGTERM/SIGHUP 路径上无法取到 Tauri state，只能直接操作静态 Child。
+pub fn kill_mpv_child() {
+    let _ = send_command(json!({ "command": ["quit"] }));
+    if let Ok(mut guard) = MPV_CHILD.lock() {
+        if let Some(mut child) = guard.take() {
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }
@@ -256,10 +262,19 @@ fn mpv_ready() -> bool {
 }
 
 fn start_mpv_process() -> Result<(), PlayerError> {
-    if mpv_ready() {
-        return Ok(());
-    }
     let socket = socket_path()?;
+    // 若 socket 上已有 mpv（上次异常退出遗留的孤儿进程），
+    // 先 IPC quit 干掉它——否则我们没法追踪这个 Child，quit 时就 kill 不了它。
+    if mpv_ready() {
+        let _ = send_command(json!({ "command": ["quit"] }));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if !mpv_ready() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
     if socket.exists() {
         let _ = fs::remove_file(&socket);
     }
