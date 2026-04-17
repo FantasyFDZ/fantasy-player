@@ -1,111 +1,131 @@
-# bootstrap_vendor.ps1 —— Windows 版 vendor 打包脚本。
+# bootstrap_vendor.ps1 -- Windows vendor bootstrap script.
 #
-# 生成 src-tauri\vendor\ 下：
-#   mpv\mpv.exe + mpv\*.dll              — 独立 mpv
-#   node.exe                              — 单文件 Node 可执行
-#   scripts\*.cjs + node_modules\         — 网易云 / QQ 音乐适配器
-#   python\python.exe + python\Lib\...    — python-build-standalone 便携 Python
-#   sidecar\audio_analyzer.py + models\   — 音频分析 Python 脚本
+# Produces src-tauri\vendor\:
+#   mpv\mpv.exe + mpv\*.dll           - standalone mpv
+#   node.exe                          - single-file Node binary
+#   scripts\*.cjs + node_modules\     - netease / QQ Music adapter
+#   python\python.exe + python\Lib\.. - portable Python (python-build-standalone)
+#   sidecar\audio_analyzer.py + ..    - audio analyzer Python script
 #
-# 前置依赖（host）：
-#   - Windows 10 1803+（内置 tar 命令）
-#   - Node.js 任意版本（PATH 能找到 npm.cmd）
-#   - 7-Zip CLI（mpv 用 .7z 分发）
+# Host prerequisites:
+#   - Windows 10 1803+ (built-in tar)
+#   - Node.js (npm.cmd on PATH)
+#   - 7-Zip CLI (auto-discovered at default install path if not on PATH)
 #       winget install -e --id 7zip.7zip
-#       或从 https://7-zip.org 下载后把安装目录加入 PATH
 #
-# 用法：
+# Usage:
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 #   .\scripts\bootstrap_vendor.ps1
 #
-# 最终体积约 700 MB。
+# Final size ~700 MB.
 
 $ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest 进度条慢 10 倍
+$ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest progress bar slows 10x
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$Vendor = Join-Path $RepoRoot 'src-tauri\vendor'
-$TempDir = Join-Path $env:TEMP 'melody-vendor'
+$Vendor   = Join-Path $RepoRoot 'src-tauri\vendor'
+$TempDir  = Join-Path $env:TEMP 'melody-vendor'
 
 Write-Host "[vendor] target dir: $Vendor" -ForegroundColor Cyan
 
-# ── 前置依赖检测 ───────────────────────────────────────────────
+# ---- dependency detection ---------------------------------------------------
+
 function Require-Command($name, $hint) {
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
-        Write-Host "❌ 缺少依赖：$name" -ForegroundColor Red
-        Write-Host "   $hint" -ForegroundColor Yellow
+        Write-Host "[ERR] missing dependency: $name" -ForegroundColor Red
+        Write-Host "      $hint" -ForegroundColor Yellow
         exit 1
     }
 }
 
-Require-Command 'node' 'Install: winget install -e --id OpenJS.NodeJS.LTS'
-Require-Command 'npm'  'Node.js 安装后应自动带上 npm.cmd'
-Require-Command 'tar'  'Windows 10 1803+ 内置，升级系统或改用 bsdtar'
-Require-Command '7z'   'Install: winget install -e --id 7zip.7zip'
+function Resolve-7z {
+    # 1. on PATH
+    $cmd = Get-Command 7z -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    # 2. default Program Files locations
+    $candidates = @(
+        "${env:ProgramFiles}\7-Zip\7z.exe",
+        "${env:ProgramFiles(x86)}\7-Zip\7z.exe"
+    )
+    foreach ($p in $candidates) {
+        if (Test-Path $p) { return $p }
+    }
+    Write-Host "[ERR] 7-Zip (7z.exe) not found." -ForegroundColor Red
+    Write-Host "      Install: winget install -e --id 7zip.7zip" -ForegroundColor Yellow
+    Write-Host "      Or download from https://7-zip.org and add install dir to PATH" -ForegroundColor Yellow
+    exit 1
+}
 
-# ── 清理并建立目录 ─────────────────────────────────────────────
+Require-Command 'node' 'Install: winget install -e --id OpenJS.NodeJS.LTS'
+Require-Command 'npm'  'npm.cmd should come with Node.js'
+Require-Command 'tar'  'Built into Windows 10 1803+'
+$SevenZip = Resolve-7z
+Write-Host "[vendor] using 7-Zip: $SevenZip" -ForegroundColor Cyan
+
+# ---- clean + create ---------------------------------------------------------
 if (Test-Path $Vendor) { Remove-Item -Recurse -Force $Vendor }
 New-Item -ItemType Directory -Force -Path $Vendor  | Out-Null
 New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
 
-# ══════════════════════════════════════════════════════════════
+# =============================================================================
 # 1. mpv for Windows
-# ══════════════════════════════════════════════════════════════
-Write-Host "[vendor] downloading mpv (x86_64, latest shinchiro build)..."
+# =============================================================================
+Write-Host "[vendor] downloading mpv (x86_64, shinchiro build)..."
 
-# 最新版信息页：https://github.com/shinchiro/mpv-winbuild-cmake/releases
-# 这里用一个已验证的稳定版本（需要时手动升级此常量）
+# latest releases: https://github.com/shinchiro/mpv-winbuild-cmake/releases
+# Bump this tag periodically.
 $MpvVersion = '20260101'
-$MpvFile = "mpv-x86_64-v3-$MpvVersion-git.7z"
-$MpvUrl = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/$MpvVersion/$MpvFile"
+$MpvFile    = "mpv-x86_64-v3-$MpvVersion-git.7z"
+$MpvUrl     = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/$MpvVersion/$MpvFile"
 $MpvArchive = Join-Path $TempDir $MpvFile
 
 try {
     Invoke-WebRequest -Uri $MpvUrl -OutFile $MpvArchive -UseBasicParsing
 } catch {
-    Write-Host "❌ 下载 mpv 失败。请到 https://github.com/shinchiro/mpv-winbuild-cmake/releases" -ForegroundColor Red
-    Write-Host "   手动下载一个 x86_64 版本，放到 $MpvArchive" -ForegroundColor Yellow
+    Write-Host "[ERR] Failed to download mpv. Please manually fetch a recent x86_64 build from" -ForegroundColor Red
+    Write-Host "      https://github.com/shinchiro/mpv-winbuild-cmake/releases" -ForegroundColor Yellow
+    Write-Host "      and save to: $MpvArchive" -ForegroundColor Yellow
     if (-not (Test-Path $MpvArchive)) { exit 1 }
 }
 
 $MpvDir = Join-Path $Vendor 'mpv'
 New-Item -ItemType Directory -Force -Path $MpvDir | Out-Null
-& 7z x $MpvArchive -o"$MpvDir" -y | Out-Null
+& $SevenZip x $MpvArchive -o"$MpvDir" -y | Out-Null
 if (-not (Test-Path (Join-Path $MpvDir 'mpv.exe'))) {
-    Write-Host "❌ mpv.exe 未在解压结果中找到" -ForegroundColor Red
+    Write-Host "[ERR] mpv.exe not found in extracted files" -ForegroundColor Red
     exit 1
 }
 $MpvSize = "{0:N1} MB" -f ((Get-ChildItem $MpvDir -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB)
 Write-Host "[vendor] mpv ready: $MpvSize"
 
-# ══════════════════════════════════════════════════════════════
-# 2. Node.js 便携二进制
-# ══════════════════════════════════════════════════════════════
+# =============================================================================
+# 2. Node.js portable
+# =============================================================================
 Write-Host "[vendor] downloading Node.js Windows binary..."
-$NodeVersion = '22.14.0'  # 22 LTS；升级前先验证 netease-cloud-music-api-alger 兼容性
-$NodeZip = "node-v$NodeVersion-win-x64.zip"
-$NodeUrl = "https://nodejs.org/dist/v$NodeVersion/$NodeZip"
+$NodeVersion = '22.14.0'   # 22 LTS
+$NodeZip     = "node-v$NodeVersion-win-x64.zip"
+$NodeUrl     = "https://nodejs.org/dist/v$NodeVersion/$NodeZip"
 $NodeArchive = Join-Path $TempDir $NodeZip
 
 Invoke-WebRequest -Uri $NodeUrl -OutFile $NodeArchive -UseBasicParsing
 Expand-Archive -Path $NodeArchive -DestinationPath $TempDir -Force
 $NodeExtracted = Join-Path $TempDir "node-v$NodeVersion-win-x64\node.exe"
 if (-not (Test-Path $NodeExtracted)) {
-    Write-Host "❌ 解压后未找到 node.exe" -ForegroundColor Red
+    Write-Host "[ERR] node.exe not found after extract" -ForegroundColor Red
     exit 1
 }
 Copy-Item $NodeExtracted (Join-Path $Vendor 'node.exe')
 
-# ══════════════════════════════════════════════════════════════
-# 3. 适配器脚本 + node_modules
-# ══════════════════════════════════════════════════════════════
+# =============================================================================
+# 3. Adapter scripts + node_modules
+# =============================================================================
 Write-Host "[vendor] installing Node runtime deps..."
 $ScriptsOut = Join-Path $Vendor 'scripts'
 New-Item -ItemType Directory -Force -Path $ScriptsOut | Out-Null
 Copy-Item (Join-Path $RepoRoot 'scripts\netease_adapter.cjs') $ScriptsOut
 Copy-Item (Join-Path $RepoRoot 'scripts\qqmusic_adapter.cjs') $ScriptsOut
 
-# 在 vendor 里做最小 npm install（仅运行时依赖）
+# minimal npm install into vendor/ so node_modules sits next to scripts/
 Push-Location $Vendor
 @'
 { "name": "melody-vendor", "private": true, "version": "1.0.0" }
@@ -115,51 +135,50 @@ Push-Location $Vendor
 Remove-Item -Force 'package-lock.json' -ErrorAction SilentlyContinue
 Pop-Location
 
-$NodeSize = "{0:N1} MB" -f ((Get-Item (Join-Path $Vendor 'node.exe')).Length / 1MB)
+$NodeSize    = "{0:N1} MB" -f ((Get-Item (Join-Path $Vendor 'node.exe')).Length / 1MB)
 $ModulesSize = "{0:N1} MB" -f ((Get-ChildItem (Join-Path $Vendor 'node_modules') -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB)
 Write-Host "[vendor] node.exe: $NodeSize, node_modules: $ModulesSize"
 
-# ══════════════════════════════════════════════════════════════
-# 4. 便携 Python 3.12 + librosa + essentia
-# ══════════════════════════════════════════════════════════════
+# =============================================================================
+# 4. Portable Python 3.12 + librosa (+ optional essentia)
+# =============================================================================
 Write-Host "[vendor] downloading portable Python 3.12..."
-$PyTag = '20260414'    # 与 macOS 脚本保持一致
-$PyVer = '3.12.13'
+$PyTag  = '20260414'   # kept in sync with bootstrap_vendor.sh
+$PyVer  = '3.12.13'
 $PyFile = "cpython-$PyVer+$PyTag-x86_64-pc-windows-msvc-install_only.tar.gz"
-$PyUrl = "https://github.com/astral-sh/python-build-standalone/releases/download/$PyTag/$PyFile"
+$PyUrl  = "https://github.com/astral-sh/python-build-standalone/releases/download/$PyTag/$PyFile"
 $PyArchive = Join-Path $TempDir $PyFile
 
 Invoke-WebRequest -Uri $PyUrl -OutFile $PyArchive -UseBasicParsing
 
 $PyDir = Join-Path $Vendor 'python'
 New-Item -ItemType Directory -Force -Path $PyDir | Out-Null
-# Windows 10+ 自带 tar 能处理 tar.gz；strip-components=1 去掉顶层 python/ 目录
+# Windows 10+ tar supports tar.gz; strip top-level python/ dir
 & tar -xzf $PyArchive -C $PyDir --strip-components=1
 if (-not (Test-Path (Join-Path $PyDir 'python.exe'))) {
-    Write-Host "❌ python.exe 未在解压结果中找到" -ForegroundColor Red
+    Write-Host "[ERR] python.exe not found after extract" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "[vendor] installing librosa + essentia + scipy (may take several minutes)..."
+Write-Host "[vendor] installing librosa + scipy + numpy (may take several minutes)..."
 $PyExe = Join-Path $PyDir 'python.exe'
-# 依次装，如果 essentia 失败，给出明确提示让用户降级到 librosa-only 构建
 & $PyExe -m pip install --quiet numpy scipy librosa
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ librosa 安装失败" -ForegroundColor Red
+    Write-Host "[ERR] librosa install failed" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "[vendor] essentia 是可选依赖（PyPI 暂无 Windows wheel），尝试安装…"
+Write-Host "[vendor] essentia is optional (no prebuilt Windows wheel on PyPI); trying anyway..."
 & $PyExe -m pip install --quiet essentia 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[vendor] essentia 安装失败 —— 已设计降级路径，BPM / Key 改由 librosa 估算，Tier 2 特征为 null。" -ForegroundColor Yellow
-    Write-Host "[vendor] 这是 Windows 构建的预期情况，不影响其余功能。" -ForegroundColor Yellow
-    $LASTEXITCODE = 0  # 重置，避免脚本后续 set -e 触发
+    Write-Host "[vendor] essentia install failed -- graceful degrade: BPM/Key fall back to librosa, Tier-2 features null." -ForegroundColor Yellow
+    Write-Host "[vendor] This is expected on Windows; the rest of the app is unaffected." -ForegroundColor Yellow
+    $global:LASTEXITCODE = 0
 } else {
-    Write-Host "[vendor] essentia 安装成功（意外惊喜）—— 将使用完整特征集合" -ForegroundColor Green
+    Write-Host "[vendor] essentia installed (full feature set available)" -ForegroundColor Green
 }
 
-# ── sidecar 脚本 ───────────────────────────────────────────────
+# ---- sidecar script ---------------------------------------------------------
 $SidecarOut = Join-Path $Vendor 'sidecar'
 New-Item -ItemType Directory -Force -Path $SidecarOut | Out-Null
 Copy-Item (Join-Path $RepoRoot 'sidecar\audio_analyzer.py') $SidecarOut
@@ -170,7 +189,7 @@ if (Test-Path (Join-Path $RepoRoot 'sidecar\models')) {
 $PySize = "{0:N1} MB" -f ((Get-ChildItem $PyDir -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB)
 Write-Host "[vendor] python ready: $PySize"
 
-# ── 清理 temp ──────────────────────────────────────────────────
+# ---- cleanup temp -----------------------------------------------------------
 Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
 
 $TotalSize = "{0:N1} MB" -f ((Get-ChildItem $Vendor -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB)
