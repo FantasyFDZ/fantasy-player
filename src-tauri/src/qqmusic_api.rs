@@ -174,12 +174,13 @@ pub fn invoke(command: &str, payload: Value) -> Result<Value, QQMusicError> {
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
 
-    let output = Command::new(&node)
-        .arg(&script)
+    let mut cmd = Command::new(&node);
+    cmd.arg(&script)
         .arg(command)
         .arg(&payload_str)
-        .current_dir(&cwd)
-        .output()?;
+        .current_dir(&cwd);
+    crate::platform::hide_console(&mut cmd);
+    let output = cmd.output()?;
 
     let stdout = String::from_utf8(output.stdout).map_err(|_| QQMusicError::Encoding)?;
     // The adapter always writes one JSON line to stdout, even on failures.

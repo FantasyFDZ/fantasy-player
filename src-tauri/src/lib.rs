@@ -7,6 +7,7 @@ pub mod db;
 pub mod llm_client;
 pub mod logger;
 pub mod netease_api;
+pub mod platform;
 pub mod player;
 pub mod qq_auth;
 pub mod qqmusic_api;

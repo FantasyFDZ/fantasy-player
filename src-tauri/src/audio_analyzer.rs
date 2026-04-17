@@ -552,12 +552,13 @@ fn run_sidecar(audio_path: &Path) -> Result<AudioFeatures, AnalyzeError> {
     let python = find_python()?;
     let script = script_path()?;
 
-    let mut child = Command::new(&python)
-        .arg(&script)
+    let mut cmd = Command::new(&python);
+    cmd.arg(&script)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    crate::platform::hide_console(&mut cmd);
+    let mut child = cmd.spawn()?;
 
     // 写 request
     if let Some(mut stdin) = child.stdin.take() {
