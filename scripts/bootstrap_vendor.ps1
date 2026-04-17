@@ -70,23 +70,30 @@ New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
 # =============================================================================
 # 1. mpv for Windows
 # =============================================================================
-Write-Host "[vendor] downloading mpv (x86_64, shinchiro build)..."
-
-# latest releases: https://github.com/shinchiro/mpv-winbuild-cmake/releases
-# Bump this tag periodically.
-$MpvVersion = '20260101'
-$MpvFile    = "mpv-x86_64-v3-$MpvVersion-git.7z"
-$MpvUrl     = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/$MpvVersion/$MpvFile"
-$MpvArchive = Join-Path $TempDir $MpvFile
-
+# shinchiro 每天新 release 一次，文件名含 git hash，没法硬编码。
+# 用 GitHub API 查最新 release，挑 x86_64-v3 的 mpv（非 dev、非 aarch64/i686）。
+Write-Host "[vendor] querying latest mpv release from shinchiro/mpv-winbuild-cmake..."
 try {
-    Invoke-WebRequest -Uri $MpvUrl -OutFile $MpvArchive -UseBasicParsing
+    $release = Invoke-RestMethod "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest" -UseBasicParsing
 } catch {
-    Write-Host "[ERR] Failed to download mpv. Please manually fetch a recent x86_64 build from" -ForegroundColor Red
-    Write-Host "      https://github.com/shinchiro/mpv-winbuild-cmake/releases" -ForegroundColor Yellow
-    Write-Host "      and save to: $MpvArchive" -ForegroundColor Yellow
-    if (-not (Test-Path $MpvArchive)) { exit 1 }
+    Write-Host "[ERR] GitHub API query failed: $_" -ForegroundColor Red
+    Write-Host "      Check network / possibly rate-limited (60/h unauth). Retry later." -ForegroundColor Yellow
+    exit 1
 }
+# 优先挑 v3（更现代的 CPU baseline），否则退到通用 x86_64
+$asset = $release.assets | Where-Object { $_.name -match '^mpv-x86_64-v3-\d+-git-[a-f0-9]+\.7z$' } | Select-Object -First 1
+if (-not $asset) {
+    $asset = $release.assets | Where-Object { $_.name -match '^mpv-x86_64-\d+-git-[a-f0-9]+\.7z$' } | Select-Object -First 1
+}
+if (-not $asset) {
+    Write-Host "[ERR] No x86_64 mpv build found in release '$($release.tag_name)'" -ForegroundColor Red
+    exit 1
+}
+$MpvFile    = $asset.name
+$MpvUrl     = $asset.browser_download_url
+$MpvArchive = Join-Path $TempDir $MpvFile
+Write-Host "[vendor] downloading $MpvFile ..."
+Invoke-WebRequest -Uri $MpvUrl -OutFile $MpvArchive -UseBasicParsing
 
 $MpvDir = Join-Path $Vendor 'mpv'
 New-Item -ItemType Directory -Force -Path $MpvDir | Out-Null
