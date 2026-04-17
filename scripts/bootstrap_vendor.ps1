@@ -176,13 +176,24 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "[vendor] essentia is optional (no prebuilt Windows wheel on PyPI); trying anyway..."
-& $PyExe -m pip install --quiet essentia 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
+# PowerShell 5.x 在 $ErrorActionPreference=Stop 下会把 pip 的 stderr 视为
+# NativeCommandError 并直接 throw；用 try/catch + 临时放松 preference 包住
+$savedPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    & $PyExe -m pip install --quiet essentia *> $null
+    $essentiaExit = $LASTEXITCODE
+} catch {
+    $essentiaExit = 1
+}
+$ErrorActionPreference = $savedPreference
+$global:LASTEXITCODE = 0  # 清状态，避免下一步 set -e 误判
+
+if ($essentiaExit -eq 0) {
+    Write-Host "[vendor] essentia installed (full feature set available)" -ForegroundColor Green
+} else {
     Write-Host "[vendor] essentia install failed -- graceful degrade: BPM/Key fall back to librosa, Tier-2 features null." -ForegroundColor Yellow
     Write-Host "[vendor] This is expected on Windows; the rest of the app is unaffected." -ForegroundColor Yellow
-    $global:LASTEXITCODE = 0
-} else {
-    Write-Host "[vendor] essentia installed (full feature set available)" -ForegroundColor Green
 }
 
 # ---- sidecar script ---------------------------------------------------------
