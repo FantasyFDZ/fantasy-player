@@ -73,39 +73,78 @@ if [ "$SIGN_FAIL" -gt 0 ]; then
     exit 1
 fi
 
-# ── 4. 构建（Tauri 检测到签名 + 公证凭据后自动执行）──────────
-echo "⚙️  Tauri build 开始（含签名 + 公证，公证环节会上传到 Apple，通常 2-5 分钟）…"
-npm run tauri:build
+# ── 4. 构建（只 sign，公证自己做）──────────────────────────────
+# 原先把 APPLE_ID/PASSWORD/TEAM_ID export 给 Tauri，会走它自带的
+# 公证流程 —— 提交 .app.zip 给 notarytool 后等到 timeout。这条路
+# 上 Apple 服务器对大体积 zip 偶尔卡 1 小时+，没法 cancel。
+# 改为：Tauri 只做签名 + 打包 .dmg，我们自己把 .dmg 提交公证。
+# .dmg 是压缩固定 image，Apple 端处理更稳，且 stapler 可直接
+# 贴到 .dmg 上，用户下载拿到就是 Gatekeeper 可验的。
+NOTARIZE_APPLE_ID="$APPLE_ID"
+NOTARIZE_APPLE_PASSWORD="$APPLE_PASSWORD"
+NOTARIZE_TEAM_ID="$APPLE_TEAM_ID"
+unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
 
-# ── 5. 验证 .app ───────────────────────────────────────────────
+echo "⚙️  Tauri build（只 sign，随后我们自己 notarize .dmg）…"
+npm run tauri:build:macos
+
+export APPLE_ID="$NOTARIZE_APPLE_ID"
+export APPLE_PASSWORD="$NOTARIZE_APPLE_PASSWORD"
+export APPLE_TEAM_ID="$NOTARIZE_TEAM_ID"
+
+# ── 5. 验证 .app / .dmg 产物 ───────────────────────────────────
 APP_PATH="$ROOT_DIR/src-tauri/target/release/bundle/macos/Fantasy Player.app"
+DMG_PATH="$ROOT_DIR/src-tauri/target/release/bundle/dmg/Fantasy Player_0.1.0_aarch64.dmg"
 if [ ! -d "$APP_PATH" ]; then
   echo "❌ 没找到 .app 产物：$APP_PATH"
   exit 1
 fi
-
-echo ""
-echo "🔍 签名信息"
-codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E "Authority|TeamIdentifier|Signature size" || true
-
-echo ""
-echo "🔍 公证 ticket（stapler）"
-if xcrun stapler validate "$APP_PATH" 2>&1; then
-  echo "✅ 公证 ticket 已 staple"
-else
-  echo "⚠️  未 staple —— 可能公证还在排队，稍后再跑：xcrun stapler staple '$APP_PATH'"
+if [ ! -f "$DMG_PATH" ]; then
+  echo "❌ 没找到 .dmg 产物：$DMG_PATH"
+  exit 1
 fi
 
 echo ""
-echo "🔍 Gatekeeper 评估"
-spctl --assess --verbose=4 --type execute "$APP_PATH" 2>&1 || true
+echo "🔏 .app 签名信息："
+codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E "Authority|TeamIdentifier|Signature size" || true
 
-# ── 6. 汇总产物 ────────────────────────────────────────────────
-DMG_PATH="$ROOT_DIR/src-tauri/target/release/bundle/dmg/Fantasy Player_0.1.0_aarch64.dmg"
+# ── 6. 手动公证 .dmg（阻塞至完成，30 分钟超时）────────────────
+echo ""
+echo "☁️  提交 .dmg 给 Apple 公证（阻塞至完成，最长 30 分钟）…"
+SUBMIT_OUT=$(xcrun notarytool submit "$DMG_PATH" \
+  --apple-id "$APPLE_ID" \
+  --password "$APPLE_PASSWORD" \
+  --team-id "$APPLE_TEAM_ID" \
+  --wait --timeout 30m 2>&1)
+echo "$SUBMIT_OUT"
+
+if echo "$SUBMIT_OUT" | grep -q "status: Accepted"; then
+  echo ""
+  echo "🏷️  公证通过，staple ticket 到 .dmg + .app…"
+  xcrun stapler staple "$DMG_PATH"
+  xcrun stapler staple "$APP_PATH"
+  echo ""
+  echo "🔍 Gatekeeper 评估 (.app)："
+  spctl --assess --verbose=4 --type execute "$APP_PATH" 2>&1 || true
+  echo ""
+  echo "🔍 Gatekeeper 评估 (.dmg)："
+  spctl --assess --verbose=4 --type open --context context:primary-signature "$DMG_PATH" 2>&1 || true
+else
+  echo ""
+  echo "❌ 公证未通过。拿 log 看具体原因："
+  SUBMIT_ID=$(echo "$SUBMIT_OUT" | awk '/id:/ {print $2; exit}')
+  if [ -n "$SUBMIT_ID" ]; then
+    xcrun notarytool log "$SUBMIT_ID" \
+      --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
+  fi
+  exit 1
+fi
+
+# ── 7. 汇总产物 ────────────────────────────────────────────────
 echo ""
 echo "══════════════════════════════════════════════"
 echo "✅ Release 构建完成"
 echo ""
 echo "  .app  $APP_PATH"
-[ -f "$DMG_PATH" ] && echo "  .dmg  $DMG_PATH"
+echo "  .dmg  $DMG_PATH"
 echo "══════════════════════════════════════════════"

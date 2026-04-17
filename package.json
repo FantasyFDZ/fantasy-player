@@ -24,7 +24,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "tauri:build:macos": "tauri build --config tauri.macos.conf.json",
+    "tauri:build:windows": "tauri build --config tauri.windows.conf.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
