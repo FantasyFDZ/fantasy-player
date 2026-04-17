@@ -39,28 +39,54 @@ fn locate_node() -> Result<PathBuf, QQMusicError> {
         return Ok(path.clone());
     }
 
-    // 1. bundled
+    let bin_name = if cfg!(windows) { "node.exe" } else { "node" };
+
+    // 1. bundled —— macOS 在 Contents/Resources/vendor/，Windows/Linux 在 exe 同级 vendor/
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            let bundled = parent.join("../Resources/vendor/node");
-            if bundled.is_file() {
-                let resolved = bundled.canonicalize().unwrap_or(bundled);
+            #[cfg(target_os = "macos")]
+            let vendor_dir = parent.join("../Resources/vendor");
+            #[cfg(not(target_os = "macos"))]
+            let vendor_dir = parent.join("vendor");
+            let single = vendor_dir.join(bin_name);
+            if single.is_file() {
+                let resolved = single.canonicalize().unwrap_or(single);
+                let _ = CACHED.set(resolved.clone());
+                return Ok(resolved);
+            }
+            let inside = vendor_dir.join("node").join(bin_name);
+            if inside.is_file() {
+                let resolved = inside.canonicalize().unwrap_or(inside);
                 let _ = CACHED.set(resolved.clone());
                 return Ok(resolved);
             }
         }
     }
     // 2. dev
-    let dev_vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor/node");
-    if dev_vendor.is_file() {
-        let _ = CACHED.set(dev_vendor.clone());
-        return Ok(dev_vendor);
+    let dev_base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor");
+    let dev_single = dev_base.join(bin_name);
+    if dev_single.is_file() {
+        let _ = CACHED.set(dev_single.clone());
+        return Ok(dev_single);
+    }
+    let dev_inside = dev_base.join("node").join(bin_name);
+    if dev_inside.is_file() {
+        let _ = CACHED.set(dev_inside.clone());
+        return Ok(dev_inside);
     }
     // 3. 系统回退
-    let candidates = [
+    #[cfg(target_os = "macos")]
+    let candidates: &[&str] = &[
         "/opt/homebrew/bin/node",
         "/usr/local/bin/node",
         "/usr/bin/node",
+    ];
+    #[cfg(target_os = "linux")]
+    let candidates: &[&str] = &["/usr/bin/node", "/usr/local/bin/node"];
+    #[cfg(target_os = "windows")]
+    let candidates: &[&str] = &[
+        r"C:\Program Files\nodejs\node.exe",
+        r"C:\Program Files (x86)\nodejs\node.exe",
     ];
     for candidate in candidates {
         let path = PathBuf::from(candidate);
@@ -71,7 +97,7 @@ fn locate_node() -> Result<PathBuf, QQMusicError> {
     }
     if let Some(path_env) = env::var_os("PATH") {
         for dir in env::split_paths(&path_env) {
-            let candidate = dir.join("node");
+            let candidate = dir.join(bin_name);
             if candidate.is_file() {
                 let _ = CACHED.set(candidate.clone());
                 return Ok(candidate);

@@ -44,7 +44,12 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-import essentia.standard as es
+try:
+    import essentia.standard as es  # type: ignore
+    ESSENTIA_AVAILABLE = True
+except ImportError:
+    es = None  # type: ignore
+    ESSENTIA_AVAILABLE = False
 import librosa
 import numpy as np
 
@@ -52,6 +57,33 @@ import numpy as np
 # ---- 模型目录 ---------------------------------------------------------------
 # Essentia-TensorFlow 预训练模型（.pb 文件）放在这里。缺失时该 tier 全部 null。
 MODELS_DIR = Path(__file__).resolve().parent / "models"
+
+
+# ---- 纯 librosa 降级路径（Windows 缺 essentia wheel 时用）-------------------
+
+_KEY_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def _librosa_bpm(y: np.ndarray, sr: int) -> tuple[float, float, list[float]]:
+    """librosa.beat.beat_track 兜底 BPM（essentia 缺席时用）。"""
+    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    bpm = float(np.asarray(tempo).flatten()[0])
+    # librosa 不吐置信度，保守给 0.5
+    return bpm, 0.5, [round(bpm, 2)]
+
+
+def _librosa_key(y: np.ndarray, sr: int) -> tuple[str, float]:
+    """基于 chromagram 峰值的粗 Key 估计。置信度用 chroma 能量占比。"""
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+    mean_chroma = np.mean(chroma, axis=1)
+    root = int(np.argmax(mean_chroma))
+    # 小调启发：相对小调根（根 - 3 半音）强度若接近大调根，倾向小调
+    minor_root = (root - 3) % 12
+    is_minor = mean_chroma[minor_root] > mean_chroma[root] * 0.9
+    name = _KEY_NAMES[root] + ("m" if is_minor else "")
+    total = float(np.sum(mean_chroma))
+    confidence = float(mean_chroma[root] / total) if total > 0 else 0.0
+    return name, confidence
 
 
 # ---- helpers ---------------------------------------------------------------
@@ -516,17 +548,7 @@ class TfModelRunner:
 # ---- 主入口 -----------------------------------------------------------------
 
 def analyze(audio_path: str) -> dict[str, Any]:
-    audio_es = es.MonoLoader(filename=audio_path, sampleRate=44100)()
-
-    # ---- Tier 0: BPM + Key ------------------------------------------------
-    bpm_final, bpm_confidence, bpm_candidates = _detect_bpm(audio_es, audio_path)
-
-    key_extractor = es.KeyExtractor()
-    key, scale, key_strength_raw = key_extractor(audio_es)
-    key_confidence = min(1.0, max(0.0, float(key_strength_raw)))
-    key_string = key if scale == "major" else f"{key}m"
-
-    # ---- Tier 1: librosa 频谱 ---------------------------------------------
+    # ---- Tier 1: librosa 频谱（独立于 essentia，永远可算）------------------
     y, sr = librosa.load(audio_path, sr=22050, mono=True)
     rms = librosa.feature.rms(y=y)[0]
     energy_raw = float(np.mean(rms))
@@ -538,22 +560,61 @@ def analyze(audio_path: str) -> dict[str, Any]:
     zcr = float(np.mean(librosa.feature.zero_crossing_rate(y=y)))
     valence = float(np.clip((centroid - 500) / 3500, 0.0, 1.0))
 
-    # ---- Tier 2: Essentia 拓展 --------------------------------------------
-    lufs, dynamic_complexity = _extract_loudness(audio_path)
-    danceability = _extract_danceability(audio_es)
-    onset_rate = _extract_onset_rate(audio_es)
-    pitch_info = _extract_predominant_pitch(audio_es)
-    chord_top, chord_changes_per_min = _extract_chords(audio_es)
-    tuning_hz = _extract_tuning(audio_es)
-    mfcc1, mfcc2, brightness_label, warmth_label = _extract_mfcc_labels(audio_es)
+    # ---- Tier 0 + 2: Essentia 路径（Windows 无 wheel 时走降级）-------------
+    if ESSENTIA_AVAILABLE:
+        audio_es = es.MonoLoader(filename=audio_path, sampleRate=44100)()
 
-    # ---- Tier 3: TF 预训练模型（可选）---------------------------------------
+        # Tier 0: BPM + Key
+        bpm_final, bpm_confidence, bpm_candidates = _detect_bpm(audio_es, audio_path)
+        key_extractor = es.KeyExtractor()
+        key, scale, key_strength_raw = key_extractor(audio_es)
+        key_confidence = min(1.0, max(0.0, float(key_strength_raw)))
+        key_string = key if scale == "major" else f"{key}m"
+
+        # Tier 2: Essentia 拓展
+        lufs, dynamic_complexity = _extract_loudness(audio_path)
+        danceability = _extract_danceability(audio_es)
+        onset_rate = _extract_onset_rate(audio_es)
+        pitch_info = _extract_predominant_pitch(audio_es)
+        chord_top, chord_changes_per_min = _extract_chords(audio_es)
+        tuning_hz = _extract_tuning(audio_es)
+        mfcc1, mfcc2, brightness_label, warmth_label = _extract_mfcc_labels(audio_es)
+
+        # BPM 翻倍兜底（需要 chord / danceability / energy / onset 联合投票）
+        bpm_final, bpm_confidence, halved = _bpm_sanity_check(
+            bpm_final,
+            bpm_confidence,
+            energy=energy,
+            danceability=danceability,
+            chord_changes_per_min=chord_changes_per_min,
+            onset_rate=onset_rate,
+        )
+        if halved and round(bpm_final, 2) not in bpm_candidates:
+            bpm_candidates.append(round(bpm_final, 2))
+    else:
+        # 降级：纯 librosa。BPM 置信度打折、Tier 2 全 null
+        bpm_final, bpm_confidence, bpm_candidates = _librosa_bpm(y, sr)
+        key_string, key_confidence = _librosa_key(y, sr)
+        lufs = None
+        dynamic_complexity = None
+        danceability = None
+        onset_rate = None
+        pitch_info = {"mean": None, "std": None, "range_semitones": None}
+        chord_top = None
+        chord_changes_per_min = None
+        tuning_hz = None
+        mfcc1 = None
+        mfcc2 = None
+        brightness_label = None
+        warmth_label = None
+
+    # ---- Tier 3: TF 预训练模型（essentia-tensorflow 必备）-------------------
     voice_instrumental = None
     voice_gender = None
     mood_tags = None
     genre_tags = None
     instrument_tags = None
-    if MODELS_DIR.is_dir():
+    if ESSENTIA_AVAILABLE and MODELS_DIR.is_dir():
         runner = TfModelRunner(MODELS_DIR)
         if runner.available:
             runner.compute_embeddings(audio_path)
@@ -562,20 +623,6 @@ def analyze(audio_path: str) -> dict[str, Any]:
             mood_tags = runner.mood_tags()
             genre_tags = runner.genre_tags()
             instrument_tags = runner.instrument_tags()
-
-    # ---- BPM 翻倍兜底 ------------------------------------------------------
-    # 用语义级特征（chord/danceability/energy/onset）共同投票判断
-    # 这里 bpm 已经经过多算法投票，但抒情曲常常被两个算法同时翻倍
-    bpm_final, bpm_confidence, halved = _bpm_sanity_check(
-        bpm_final,
-        bpm_confidence,
-        energy=energy,
-        danceability=danceability,
-        chord_changes_per_min=chord_changes_per_min,
-        onset_rate=onset_rate,
-    )
-    if halved and round(bpm_final, 2) not in bpm_candidates:
-        bpm_candidates.append(round(bpm_final, 2))
 
     return {
         # Tier 0

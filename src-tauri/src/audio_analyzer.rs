@@ -142,10 +142,21 @@ fn find_python() -> Result<PathBuf, AnalyzeError> {
         return Ok(path.clone());
     }
 
-    // 1. bundled：Contents/Resources/vendor/python/bin/python3.12
+    // Python 在 portable 发行版里的相对路径：
+    //   Unix: bin/python3.12 （pyenv / cpython 标准结构）
+    //   Windows: python.exe （embeddable zip 顶层）
+    #[cfg(windows)]
+    let python_rel = "vendor/python/python.exe";
+    #[cfg(not(windows))]
+    let python_rel = "vendor/python/bin/python3.12";
+
+    // 1. bundled
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            let bundled = parent.join("../Resources/vendor/python/bin/python3.12");
+            #[cfg(target_os = "macos")]
+            let bundled = parent.join("../Resources").join(python_rel);
+            #[cfg(not(target_os = "macos"))]
+            let bundled = parent.join(python_rel);
             if bundled.is_file() {
                 let resolved = bundled.canonicalize().unwrap_or(bundled);
                 let _ = CACHED.set(resolved.clone());
@@ -153,16 +164,16 @@ fn find_python() -> Result<PathBuf, AnalyzeError> {
             }
         }
     }
-    // 2. dev：src-tauri/vendor/python/bin/python3.12
-    let dev_vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("vendor/python/bin/python3.12");
+    // 2. dev：src-tauri/vendor/python/...
+    let dev_vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(python_rel);
     if dev_vendor.is_file() {
         let _ = CACHED.set(dev_vendor.clone());
         return Ok(dev_vendor);
     }
 
     // 3. 系统回退 —— 校验能 import librosa
-    let candidates = [
+    #[cfg(target_os = "macos")]
+    let candidates: &[&str] = &[
         "/opt/homebrew/bin/python3.12",
         "/opt/homebrew/bin/python3.11",
         "/usr/local/bin/python3.12",
@@ -170,16 +181,34 @@ fn find_python() -> Result<PathBuf, AnalyzeError> {
         "python3.12",
         "python3",
     ];
+    #[cfg(target_os = "linux")]
+    let candidates: &[&str] = &[
+        "/usr/bin/python3.12",
+        "/usr/bin/python3",
+        "python3.12",
+        "python3",
+    ];
+    #[cfg(target_os = "windows")]
+    let candidates: &[&str] = &[
+        "py",
+        "python.exe",
+        "python3.exe",
+        r"C:\Python312\python.exe",
+        r"C:\Program Files\Python312\python.exe",
+    ];
 
     for candidate in candidates {
         let path = PathBuf::from(candidate);
-        let ok = Command::new(&path)
-            .args(["-c", "import librosa"])
+        let mut cmd = Command::new(&path);
+        cmd.args(["-c", "import librosa"])
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let ok = cmd.status().map(|s| s.success()).unwrap_or(false);
         if ok {
             let _ = CACHED.set(path.clone());
             return Ok(path);
@@ -194,14 +223,21 @@ fn script_path() -> Result<PathBuf, AnalyzeError> {
         return Ok(path.clone());
     }
 
-    // 1. bundled
+    // 1. bundled —— macOS 在 Contents/Resources/，Windows/Linux 在 exe 同级
+    #[cfg(target_os = "macos")]
+    let bundled_rels: &[&str] = &[
+        "../Resources/vendor/sidecar/audio_analyzer.py",
+        "../Resources/sidecar/audio_analyzer.py",
+        "../sidecar/audio_analyzer.py",
+        "../../sidecar/audio_analyzer.py",
+    ];
+    #[cfg(not(target_os = "macos"))]
+    let bundled_rels: &[&str] = &[
+        "vendor/sidecar/audio_analyzer.py",
+        "sidecar/audio_analyzer.py",
+    ];
     if let Ok(exe) = std::env::current_exe() {
-        for rel in [
-            "../Resources/vendor/sidecar/audio_analyzer.py",
-            "../Resources/sidecar/audio_analyzer.py",
-            "../sidecar/audio_analyzer.py",
-            "../../sidecar/audio_analyzer.py",
-        ] {
+        for rel in bundled_rels {
             let candidate = exe.parent().map(|p| p.join(rel)).unwrap_or_default();
             if candidate.is_file() {
                 let resolved = candidate.canonicalize().unwrap_or(candidate);

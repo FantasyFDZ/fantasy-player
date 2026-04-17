@@ -8,8 +8,7 @@
 //! 属于 [`crate::queue`] 的职责。
 
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,6 +21,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
+
+#[cfg(windows)]
+const MPV_PIPE_NAME: &str = "melody-mpv";
 
 /// 全局保存 mpv 子进程句柄，用于在 quit() 时彻底 kill。
 /// Command::spawn() 默认是 fire-and-forget：父进程 exit(0) 时子进程变孤儿继续播放。
@@ -37,28 +39,52 @@ fn config_dir() -> Result<PathBuf, PlayerError> {
     Ok(dir)
 }
 
-fn socket_path() -> Result<PathBuf, PlayerError> {
-    Ok(config_dir()?.join("mpv.sock"))
+/// 给 mpv 的 `--input-ipc-server=` 参数值：
+/// - Unix：filesystem socket 路径，如 `~/.config/melody/mpv.sock`
+/// - Windows：命名管道路径，`\\.\pipe\melody-mpv`
+fn mpv_ipc_target() -> Result<String, PlayerError> {
+    #[cfg(unix)]
+    {
+        Ok(config_dir()?.join("mpv.sock").to_string_lossy().into_owned())
+    }
+    #[cfg(windows)]
+    {
+        let _ = config_dir()?; // 保证目录存在（db 等共用）
+        Ok(format!(r"\\.\pipe\{}", MPV_PIPE_NAME))
+    }
 }
 
 fn locate_mpv() -> Result<PathBuf, PlayerError> {
-    // 优先使用打包进 .app 的 mpv（Contents/Resources/vendor/mpv/mpv）
-    if let Ok(bundled) = bundled_path("vendor/mpv/mpv") {
+    let bin_name = if cfg!(windows) { "mpv.exe" } else { "mpv" };
+
+    // 1. 打包资源：macOS 是 Contents/Resources/vendor/mpv/，Windows 是 <exe_dir>/vendor/mpv/
+    if let Ok(bundled) = bundled_path(&format!("vendor/mpv/{bin_name}")) {
         if bundled.is_file() {
             return Ok(bundled);
         }
     }
-    // 开发环境：仓库根目录 src-tauri/vendor/mpv/mpv
-    let dev_vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor/mpv/mpv");
+    // 2. 开发环境：仓库根目录 src-tauri/vendor/mpv/
+    let dev_vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("vendor/mpv")
+        .join(bin_name);
     if dev_vendor.is_file() {
         return Ok(dev_vendor);
     }
-    // 系统回退
-    let candidates = [
+    // 3. 系统回退
+    #[cfg(target_os = "macos")]
+    let candidates: &[&str] = &[
         "/opt/homebrew/bin/mpv",
         "/usr/local/bin/mpv",
         "/usr/bin/mpv",
     ];
+    #[cfg(target_os = "linux")]
+    let candidates: &[&str] = &["/usr/bin/mpv", "/usr/local/bin/mpv"];
+    #[cfg(target_os = "windows")]
+    let candidates: &[&str] = &[
+        r"C:\Program Files\mpv\mpv.exe",
+        r"C:\Program Files (x86)\mpv\mpv.exe",
+    ];
+
     for candidate in candidates {
         let path = PathBuf::from(candidate);
         if path.is_file() {
@@ -67,7 +93,7 @@ fn locate_mpv() -> Result<PathBuf, PlayerError> {
     }
     if let Some(path_env) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path_env) {
-            let candidate = dir.join("mpv");
+            let candidate = dir.join(bin_name);
             if candidate.is_file() {
                 return Ok(candidate);
             }
@@ -76,12 +102,20 @@ fn locate_mpv() -> Result<PathBuf, PlayerError> {
     Err(PlayerError::MpvNotFound)
 }
 
-/// 相对可执行文件，定位 Contents/Resources/<rel>
+/// 定位打包进 .app/.exe 的资源文件。
+/// - macOS：Contents/MacOS/<bin> → Contents/Resources/<rel>
+/// - Windows/Linux：<exe_dir>/<rel>（Tauri 把 bundle.resources 平铺到 exe 同级）
 pub(crate) fn bundled_path(rel: &str) -> Result<PathBuf, PlayerError> {
     let exe = std::env::current_exe()?;
     let parent = exe.parent().ok_or(PlayerError::MpvNotFound)?;
-    // macOS .app 结构：Contents/MacOS/<bin> → Contents/Resources
-    Ok(parent.join("../Resources").join(rel))
+    #[cfg(target_os = "macos")]
+    {
+        Ok(parent.join("../Resources").join(rel))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(parent.join(rel))
+    }
 }
 
 // ---- errors ----------------------------------------------------------------
@@ -262,8 +296,8 @@ fn mpv_ready() -> bool {
 }
 
 fn start_mpv_process() -> Result<(), PlayerError> {
-    let socket = socket_path()?;
-    // 若 socket 上已有 mpv（上次异常退出遗留的孤儿进程），
+    let ipc_target = mpv_ipc_target()?;
+    // 若 IPC 端点上已有 mpv（上次异常退出遗留的孤儿进程），
     // 先 IPC quit 干掉它——否则我们没法追踪这个 Child，quit 时就 kill 不了它。
     if mpv_ready() {
         let _ = send_command(json!({ "command": ["quit"] }));
@@ -275,22 +309,35 @@ fn start_mpv_process() -> Result<(), PlayerError> {
             thread::sleep(Duration::from_millis(50));
         }
     }
-    if socket.exists() {
-        let _ = fs::remove_file(&socket);
+    // Unix：清理遗留 socket 文件（Windows 命名管道无需）
+    #[cfg(unix)]
+    {
+        let socket_path = config_dir()?.join("mpv.sock");
+        if socket_path.exists() {
+            let _ = fs::remove_file(&socket_path);
+        }
     }
     let mpv = locate_mpv()?;
-    let child = Command::new(&mpv)
-        .arg("--idle=yes")
+    let mut cmd = Command::new(&mpv);
+    cmd.arg("--idle=yes")
         .arg("--video=no")
         .arg("--no-terminal")
         .arg("--force-window=no")
         .arg("--really-quiet")
         .arg("--keep-open=yes")
-        .arg(format!("--input-ipc-server={}", socket.display()))
+        .arg(format!("--input-ipc-server={}", ipc_target))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+
+    // Windows：隐藏 console 窗口（CREATE_NO_WINDOW = 0x0800_0000）
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+
+    let child = cmd.spawn()?;
     // 记下 Child 以便 quit() 时 kill
     *MPV_CHILD.lock().unwrap() = Some(child);
 
@@ -305,17 +352,39 @@ fn start_mpv_process() -> Result<(), PlayerError> {
 }
 
 fn send_command(cmd: Value) -> Result<Value, PlayerError> {
-    let socket = socket_path()?;
-    let mut stream = UnixStream::connect(&socket)
-        .map_err(|e| PlayerError::Ipc(format!("连接 mpv socket 失败: {e}")))?;
-    stream.set_read_timeout(Some(Duration::from_millis(500)))?;
-    stream.set_write_timeout(Some(Duration::from_millis(500)))?;
-
     let line = format!("{cmd}\n");
-    stream.write_all(line.as_bytes())?;
-    stream.flush()?;
 
-    // mpv 会把无关事件穿插在响应前；找到含 "request_id" 或 "error" 的响应行。
+    #[cfg(unix)]
+    {
+        use std::os::unix::net::UnixStream;
+        let socket = config_dir()?.join("mpv.sock");
+        let mut stream = UnixStream::connect(&socket)
+            .map_err(|e| PlayerError::Ipc(format!("连接 mpv socket 失败: {e}")))?;
+        stream.set_read_timeout(Some(Duration::from_millis(500)))?;
+        stream.set_write_timeout(Some(Duration::from_millis(500)))?;
+        stream.write_all(line.as_bytes())?;
+        stream.flush()?;
+        parse_mpv_response(stream)
+    }
+
+    #[cfg(windows)]
+    {
+        use interprocess::local_socket::{
+            prelude::*, GenericNamespaced, Stream,
+        };
+        let name = MPV_PIPE_NAME
+            .to_ns_name::<GenericNamespaced>()
+            .map_err(|e| PlayerError::Ipc(format!("构造 pipe 名失败: {e}")))?;
+        let mut stream = Stream::connect(name)
+            .map_err(|e| PlayerError::Ipc(format!("连接 mpv pipe 失败: {e}")))?;
+        stream.write_all(line.as_bytes())?;
+        stream.flush()?;
+        parse_mpv_response(stream)
+    }
+}
+
+/// 从 mpv 响应流里滤掉异步事件，读到第一个真正的命令响应。
+fn parse_mpv_response<S: Read>(stream: S) -> Result<Value, PlayerError> {
     let mut reader = BufReader::new(stream);
     for _ in 0..16 {
         let mut buf = String::new();
