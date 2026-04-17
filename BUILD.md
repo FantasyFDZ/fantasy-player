@@ -1,8 +1,8 @@
-# Melody 构建指南
+# Fantasy Player 构建指南
 
 ## 发版打包（自包含 .app）
 
-Melody 的 `.app` 把 mpv、Node、Python、以及 librosa/essentia 全部打进去，
+Fantasy Player 的 `.app` 把 mpv、Node、Python、以及 librosa/essentia 全部打进去，
 用户安装后**无需装任何外部依赖**即可运行。
 
 ### 前置依赖（host 机）
@@ -24,8 +24,8 @@ npm run tauri build
 ```
 
 产出位置：
-- `.app`: `src-tauri/target/release/bundle/macos/Melody.app`
-- `.dmg`: `src-tauri/target/release/bundle/dmg/Melody_0.1.0_aarch64.dmg`
+- `.app`: `src-tauri/target/release/bundle/macos/Fantasy Player.app`
+- `.dmg`: `src-tauri/target/release/bundle/dmg/Fantasy Player_0.1.0_aarch64.dmg`
 
 ### vendor 目录结构
 

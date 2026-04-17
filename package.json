@@ -1,13 +1,30 @@
 {
-  "name": "melody",
+  "name": "fantasy-player",
+  "productName": "Fantasy Player",
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "description": "Fantasy Player — AI 驱动的桌面音乐播放器，基于 Tauri 2 + React + TypeScript",
+  "author": {
+    "name": "FantaDZ",
+    "email": "fandz.steve@gmail.com"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/FantasyFDZ/musicplayer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FantasyFDZ/musicplayer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/FantasyFDZ/musicplayer/issues"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
