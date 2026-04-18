@@ -4,9 +4,9 @@
 
 ## [Unreleased]
 
-## [0.1.0] — 2026-04-17
+## [0.1.0] — 2026-04-18
 
-首个公开发布版本。
+首个公开发布版本。**macOS + Windows 双平台**。
 
 ### 播放核心
 - 基于 MPV（Unix socket IPC）的原生播放引擎
@@ -69,16 +69,34 @@
 - `~/.config/melody/qq_session.json` — QQ 音乐会话
 
 ### 打包与分发
-- 自包含 `.app`：mpv / Node / Python 3.12 / librosa / Essentia 全部内嵌
-- DMG 产物（macOS arm64）
+
+**macOS (Apple Silicon)**
+- 自包含 `.app`：mpv + dylibs / Node / Python 3.12 / librosa / Essentia 全部内嵌
+- `.dmg` 产物（arm64，~220 MB）
+- 用 Developer ID Application 证书签名（Team `6633WR778C`），Gatekeeper 可验身份
 - 首次启动无需安装任何外部依赖
+
+**Windows (x64)**
+- 自包含 `.exe`：mpv + DLLs / Node / Python 3.12 / librosa 内嵌
+- NSIS installer (`Fantasy Player_0.1.0_x64-setup.exe`) + MSI (`Fantasy Player_0.1.0_x64_en-US.msi`)
+- Python 版的 Essentia 没有 Windows wheel，音绪面板部分高级特征会降级（见"已知限制"）
+
+**GitHub Actions CI**
+- `.github/workflows/release.yml`：tag 推送触发，双 runner 自动打包 + macOS 签名公证 + 创建 draft Release
+- 配合 `docs/ci-setup.md` 一次性配 7 个 Secrets
 
 ### 已知限制
 
-- **仅支持 macOS 13+ (arm64)** —— Windows / Linux / Intel Mac 未提供预编译产物
-- **未代码签名 / 公证** —— 首次打开需在"系统设置 → 隐私与安全性"中允许，或用 `xattr -d com.apple.quarantine` 去除隔离标记
+- **macOS .app 未公证**（Apple 公证服务在发布期间持续异常，提交 5 次均 timeout；后续 v0.1.0.1 会补公证 ticket）
+  - 首次打开会弹 Gatekeeper 警告 "来自身份不明开发者"
+  - 解决：右键图标 → 打开 → 再次确认（**一次永久放行**，Gatekeeper 会记住该证书身份）
+  - 或终端：`xattr -d com.apple.quarantine "/Applications/Fantasy Player.app"`
+- **Windows 未代码签名** —— SmartScreen 首次会警告"未知发行者"；点"更多信息 → 仍要运行"即可
+- **Windows 音绪面板不吸附主窗口** —— macOS 用 `objc2-app-kit` 的 NSWindow 私有 API 实现，Windows 需要 HWND 另写一套，列入 v0.2.0
+- **Windows 上 Essentia 特征降级** —— PyPI 无 Windows wheel；BPM / Key / Energy / 频谱用 librosa 兜底，LUFS / 和弦 / danceability / MFCC 标签为 null
+- **仅 Apple Silicon 和 x64** —— Intel Mac / Linux / ARM Windows 未提供预编译产物（本地构建理论可行）
 - **播放队列与进度不持久化** —— 当前仅保留在内存，App 重启后丢失
-- **体积偏大** —— DMG ~300 MB，Python 依赖占 66%，后续会瘦身
+- **体积偏大** —— DMG ~220 MB / MSI+EXE ~300 MB，Python 依赖占大头，后续会瘦身
 - **Tier 3 / 4 音频特征未实现** —— 数据库字段预留：TensorFlow 预测（人声 / 性别 / 乐器 / 风格）与 LLM BPM 校准
 - **chat_history / dj_sessions** —— 数据库表预留，当前版本无对应前端功能
 
