@@ -38,8 +38,9 @@ Thumbs.db
 # 签名凭据（本地持有，绝不入库）
 scripts/sign.env
 
-# 内部审查报告（非公开）
+# 内部审查报告 / 开发计划（含旧开发机路径，非公开）
 docs/superpowers/reviews/
+docs/superpowers/plans/
 
 # Python sidecar
 sidecar/__pycache__/
