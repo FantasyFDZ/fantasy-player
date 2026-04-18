@@ -65,7 +65,7 @@ Python sidecar（librosa + Essentia）自动提取：
 
 ### macOS
 
-1. 从 [Releases](https://github.com/FantasyFDZ/musicplayer/releases) 下载最新 `.dmg`
+1. 从 [Releases](https://github.com/FantasyFDZ/fantasy-player/releases) 下载最新 `.dmg`
 2. 拖拽 `Fantasy Player.app` 到「应用程序」
 3. 首次打开若提示"无法打开来自身份不明开发者的应用"：
    - 右键图标 → 选择「打开」→ 再次确认
@@ -89,7 +89,7 @@ Python sidecar（librosa + Essentia）自动提取：
 ## 🛠️ 开发
 
 ```bash
-git clone https://github.com/FantasyFDZ/musicplayer.git
+git clone https://github.com/FantasyFDZ/fantasy-player.git
 cd musicplayer
 npm install
 npm run tauri:dev

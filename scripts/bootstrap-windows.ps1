@@ -7,7 +7,7 @@
 #   4. 汇总结果
 #
 # 使用方法：
-#   1. git clone https://github.com/FantasyFDZ/musicplayer.git
+#   1. git clone https://github.com/FantasyFDZ/fantasy-player.git
 #   2. cd musicplayer
 #   3. 以【管理员身份】打开 PowerShell
 #   4. Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -35,7 +35,7 @@ if (-not (Test-Path 'package.json') -or -not (Test-Path 'src-tauri')) {
     Write-Host "❌ 当前目录不是 musicplayer 仓库根。" -ForegroundColor Red
     Write-Host "   请先：" -ForegroundColor Yellow
     Write-Host "     cd \$HOME" -ForegroundColor Yellow
-    Write-Host "     git clone https://github.com/FantasyFDZ/musicplayer.git" -ForegroundColor Yellow
+    Write-Host "     git clone https://github.com/FantasyFDZ/fantasy-player.git" -ForegroundColor Yellow
     Write-Host "     cd musicplayer" -ForegroundColor Yellow
     Write-Host "     .\scripts\bootstrap-windows.ps1" -ForegroundColor Yellow
     exit 1

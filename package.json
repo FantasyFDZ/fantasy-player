@@ -10,13 +10,13 @@
     "email": "fandz.steve@gmail.com"
   },
   "license": "MIT",
-  "homepage": "https://github.com/FantasyFDZ/musicplayer#readme",
+  "homepage": "https://github.com/FantasyFDZ/fantasy-player#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/FantasyFDZ/musicplayer.git"
+    "url": "git+https://github.com/FantasyFDZ/fantasy-player.git"
   },
   "bugs": {
-    "url": "https://github.com/FantasyFDZ/musicplayer/issues"
+    "url": "https://github.com/FantasyFDZ/fantasy-player/issues"
   },
   "scripts": {
     "dev": "vite",

@@ -100,5 +100,5 @@
 - **Tier 3 / 4 音频特征未实现** —— 数据库字段预留：TensorFlow 预测（人声 / 性别 / 乐器 / 风格）与 LLM BPM 校准
 - **chat_history / dj_sessions** —— 数据库表预留，当前版本无对应前端功能
 
-[Unreleased]: https://github.com/FantasyFDZ/musicplayer/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/FantasyFDZ/musicplayer/releases/tag/v0.1.0
+[Unreleased]: https://github.com/FantasyFDZ/fantasy-player/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/FantasyFDZ/fantasy-player/releases/tag/v0.1.0
