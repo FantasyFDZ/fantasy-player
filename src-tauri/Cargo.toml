@@ -2,7 +2,7 @@
 name = "melody"
 version = "0.1.0"
 description = "Fantasy Player — AI-powered desktop music player"
-authors = ["FantaDZ <fandz.steve@gmail.com>"]
+authors = ["FantaDZ <topfdz@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/FantasyFDZ/fantasy-player"
 edition = "2021"
