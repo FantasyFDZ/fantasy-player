@@ -1,34 +1,38 @@
-# Fantasy Player — AI 音乐播放器
+# Fantasy Player — Claude Code 协作指令
 
-## 项目概述
+项目概况 / 安装 / 构建 / 架构请看 [README.md](./README.md)。  
+本文件只记录 Claude Code / AI 协作时需要知道的约定。
 
-基于 Tauri 2 + React + TypeScript 的桌面音乐播放器。核心设计理念：极简即高级，扩展即丰富。
+## 目录约定
 
-## 设计文档
+- `src-tauri/vendor/` —— 由 `scripts/bootstrap_vendor.sh` / `.ps1` 生成，**不要手动改**，会被 re-bootstrap 重置
+- `scripts/sign.env` —— 本地 macOS 签名凭据，**已 gitignore 绝不入库**，只能在 `scripts/sign.env.example` 为模板
+- `docs/superpowers/plans/` / `reviews/` —— 内部规划文档，gitignore 不公开
+- `src-tauri/tauri.conf.json` —— 跨平台通用配置，不放 `bundle.resources`
+  - macOS 专用 resources 在 `tauri.macos.conf.json`
+  - Windows 专用在 `tauri.windows.conf.json`
 
-- 设计规格：`docs/superpowers/specs/2026-04-12-musicplayer-design.md`
-- 实施计划：`docs/superpowers/specs/2026-04-12-musicplayer-implementation-plan.md`
+## 常用命令
 
-## 技术栈
+| 场景 | 命令 |
+|---|---|
+| 前端类型检查 + 构建 | `npm run build` |
+| Rust 单元 / 集成测试 | `cd src-tauri && cargo test` |
+| 开发运行（Tauri dev） | `npm run tauri:dev` |
+| macOS 发版（签名 + 公证） | `bash scripts/build-macos-release.sh`（需先 `cp sign.env.example sign.env` 填凭据） |
+| Windows 发版 | `npm run tauri:build:windows` |
+| GitHub Actions 发版自动化 | 见 [docs/ci-setup.md](./docs/ci-setup.md) |
 
-- **桌面框架：** Tauri 2 (Rust 后端)
-- **前端：** React 18 + TypeScript + Vite + Tailwind CSS
-- **播放引擎：** MPV (Unix socket IPC)
-- **音频分析：** Python sidecar (librosa + Essentia)
-- **数据库：** SQLite (rusqlite)
-- **音乐 API：** netease-cloud-music-api-alger / qq-music-api（Node 适配器）
-- **LLM：** 统一客户端，支持 OpenAI 兼容协议 + Anthropic 协议
+## 跨平台改动约束
 
-## 架构
+任何新的 `Command::spawn` / `std::os::unix::net::*` / `GetLastError` 等系统调用，**都要加 `#[cfg(unix)]` / `#[cfg(windows)]` 对应分支**。Windows 上 spawn 子进程必须用 `crate::platform::hide_console(&mut cmd)` 隐藏 console 窗口。
 
-分层插件架构：核心层（留声机 + 歌词 + 播放 + 主题）+ 插件面板层。当前已注册 1 个面板：**音绪（music_analysis）** —— 指标条 + 热评 + AI 独白。预留扩展位（chat_history / dj_sessions 表已建但前端未实现）。
+## LLM Provider
 
-主要 UI 视图：主舞台 / 搜索（含 AI 模式）/ 歌单 / 登录 / 设置（模型 + 歌单迁移 Tab）。
+运行时由用户在设置面板配置（Base URL + API Key + 模型名 + 协议）。Key 持久化到本地 SQLite `~/.config/melody/melody.db`，**不写入代码、conf 文件或环境变量**。首次启动 Provider 列表为空，不预植入默认值。
 
-## LLM Provider 配置
+## 已知降级路径
 
-运行时在应用内设置页面配置 Provider（API Key + endpoint）。Key 持久化到本地 SQLite，不写入代码或配置文件。支持 OpenAI 兼容协议和 Anthropic 协议，典型可接入：通义 DashScope、MiniMax、MiMo、LM Studio (本地) 等。
-
-## 实施阶段
-
-按 Phase 1-9 顺序实施，详见实施计划文档。每个 Phase 有明确的任务清单和验收标准。
+- **Windows 无 Essentia** —— PyPI 无 Windows wheel，`sidecar/audio_analyzer.py` 顶部 try-import essentia 失败后走 librosa-only 路径，BPM/Key 仍可用但 Tier 2 特征（LUFS / 和弦 / danceability 等）为 null
+- **macOS 未公证** —— v0.1.0 发版期间 Apple 公证 pipeline 异常，首发 Release 仅签名未公证，后续 v0.1.0.1 或 v0.1.1 补
+- **Windows 音绪面板不吸附主窗口** —— macOS 用 `objc2-app-kit` NSWindow 私有 API 实现，Windows 需 HWND + SetWindowPos，列入 v0.2.0
