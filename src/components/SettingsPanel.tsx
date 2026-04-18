@@ -45,14 +45,11 @@ export function SettingsPanel() {
 // 协议默认 openai（kimi/通义/MiniMax 等国内模型都走 OpenAI 兼容接口），
 // 仅在使用 Claude API 时需要手动切到 anthropic。
 
-const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
-const DEFAULT_MODEL = "kimi-k2.5";
-
 function LlmSettingsView() {
   // 保留原 provider id，保存时回写同一条记录
   const [providerId, setProviderId] = useState("default");
-  const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL);
-  const [modelName, setModelName] = useState(DEFAULT_MODEL);
+  const [baseUrl, setBaseUrl] = useState("");
+  const [modelName, setModelName] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [protocol, setProtocol] = useState<LlmProtocol>("openai");
   const [status, setStatus] = useState("");
@@ -256,17 +253,6 @@ function LlmSettingsView() {
                 ))}
               </div>
             </Field>
-            <div
-              style={{
-                fontSize: 10,
-                color: "rgba(255,220,180,0.5)",
-                marginTop: 6,
-                lineHeight: 1.5,
-              }}
-            >
-              绝大多数模型（kimi / 通义 / MiniMax / DeepSeek 等）用 openai 协议。
-              仅在直连 Claude API 时切到 anthropic。
-            </div>
           </div>
         )}
 

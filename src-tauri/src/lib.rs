@@ -30,8 +30,7 @@ pub fn run() {
     let player = PlayerState::new();
     let queue = QueueState::new();
     let db = Db::open_default().expect("failed to open melody.db");
-    // 首次启动时植入 4 个默认 Provider（api_key 为空，由用户后续填入）
-    let _ = db.seed_providers_if_empty();
+    // Provider 首次启动为空，由用户在设置面板手工添加（避免预植入让用户困惑）
     let llm = LlmClient::new();
 
     // SIGINT/SIGTERM/SIGHUP → 杀 mpv 再退出。
