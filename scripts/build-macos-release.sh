@@ -111,12 +111,20 @@ codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E "Authority|TeamIdentifier|Si
 # ── 6. 手动公证 .dmg（阻塞至完成，30 分钟超时）────────────────
 echo ""
 echo "☁️  提交 .dmg 给 Apple 公证（阻塞至完成，最长 30 分钟）…"
-SUBMIT_OUT=$(xcrun notarytool submit "$DMG_PATH" \
+echo "   你会看到 'Current status: In Progress...' 省略号不停增加 —— 正常"
+SUBMIT_LOG=$(mktemp /tmp/melody-notarize.XXXXXX.log)
+# tee 让 stdout 实时显示到终端，同时落盘到 SUBMIT_LOG 便于后续 grep
+set +e
+xcrun notarytool submit "$DMG_PATH" \
   --apple-id "$APPLE_ID" \
   --password "$APPLE_PASSWORD" \
   --team-id "$APPLE_TEAM_ID" \
-  --wait --timeout 30m 2>&1)
-echo "$SUBMIT_OUT"
+  --wait --timeout 30m 2>&1 | tee "$SUBMIT_LOG"
+NOTARIZE_EXIT=${PIPESTATUS[0]}
+set -e
+SUBMIT_OUT=$(cat "$SUBMIT_LOG")
+echo ""
+echo "notarytool 退出码: $NOTARIZE_EXIT"
 
 if echo "$SUBMIT_OUT" | grep -q "status: Accepted"; then
   echo ""
