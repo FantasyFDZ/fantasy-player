@@ -1,0 +1,219 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v0.1.0-test for dry-run)'
+        required: true
+        default: 'v0.1.0-test'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # macOS (Apple Silicon) — 签名 + 公证 + .dmg
+  # ──────────────────────────────────────────────────────────────────
+  build-macos:
+    name: Build macOS (Apple Silicon)
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install Homebrew deps
+        run: brew install mpv dylibbundler
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Bootstrap vendor (mpv / node / python / librosa / essentia)
+        run: bash scripts/bootstrap_vendor.sh
+
+      - name: Import Developer ID certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
+
+      - name: Generate scripts/sign.env from secrets
+        run: |
+          umask 077
+          cat > scripts/sign.env <<'EOF'
+          export APPLE_SIGNING_IDENTITY="${{ secrets.APPLE_SIGNING_IDENTITY }}"
+          export APPLE_ID="${{ secrets.APPLE_ID }}"
+          export APPLE_PASSWORD="${{ secrets.APPLE_PASSWORD }}"
+          export APPLE_TEAM_ID="${{ secrets.APPLE_TEAM_ID }}"
+          EOF
+          chmod 600 scripts/sign.env
+
+      - name: Build + Sign + Notarize
+        run: bash scripts/build-macos-release.sh
+
+      - name: Clean up sign.env
+        if: always()
+        run: rm -f scripts/sign.env
+
+      - name: Upload macOS .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  # ──────────────────────────────────────────────────────────────────
+  # Windows — .msi + NSIS .exe（未签名）
+  # ──────────────────────────────────────────────────────────────────
+  build-windows:
+    name: Build Windows (x64)
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Setup Python 3.12 (host sanity check; vendor 仍用 portable Python)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Bootstrap vendor (mpv / node / python / librosa)
+        shell: pwsh
+        env:
+          # 提高 GitHub API 限额（脚本用 API 查 shinchiro 最新 mpv release）
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+          ./scripts/bootstrap_vendor.ps1
+
+      - name: Tauri build (MSI + NSIS)
+        run: npm run tauri:build:windows
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  # ──────────────────────────────────────────────────────────────────
+  # 汇总：下载两平台产物，创建 draft Release
+  # ──────────────────────────────────────────────────────────────────
+  release:
+    name: Publish draft Release
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+
+      - name: Inspect artifacts
+        run: find dist-artifacts -type f -printf '%p  %s bytes\n' 2>/dev/null || find dist-artifacts -type f
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract CHANGELOG section for this tag
+        id: notes
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+          # 提取 CHANGELOG 里 "## [X.Y.Z]" 到下一个 "## [" 之间的段落
+          awk -v ver="## [$VERSION]" '
+            index($0, ver) == 1 { flag=1; print; next }
+            flag && /^## \[/ { flag=0 }
+            flag { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "CHANGELOG 中未找到 [$VERSION] 段，使用通用说明" >&2
+            cat > release-notes.md <<EOF
+          ## Fantasy Player ${TAG}
+
+          自动构建的 Release。详细更新请查看 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)。
+
+          ## 下载
+
+          - **macOS (Apple Silicon)**：\`Fantasy Player_*.dmg\`
+          - **Windows x64**：\`Fantasy Player_*.msi\` 或 \`Fantasy Player_*-setup.exe\`
+          EOF
+          fi
+          echo "---  release-notes.md  ---"
+          cat release-notes.md
+
+      - name: Create GitHub Release (draft)
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: Fantasy Player ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ steps.tag.outputs.tag }}
+          body_path: release-notes.md
+          files: |
+            dist-artifacts/macos-dmg/*.dmg
+            dist-artifacts/windows-installers/msi/*.msi
+            dist-artifacts/windows-installers/nsis/*-setup.exe
+          fail_on_unmatched_files: true
+          make_latest: false

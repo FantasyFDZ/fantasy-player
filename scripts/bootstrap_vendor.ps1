@@ -73,8 +73,13 @@ New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
 # shinchiro 每天新 release 一次，文件名含 git hash，没法硬编码。
 # 用 GitHub API 查最新 release，挑 x86_64-v3 的 mpv（非 dev、非 aarch64/i686）。
 Write-Host "[vendor] querying latest mpv release from shinchiro/mpv-winbuild-cmake..."
+# CI 上共享 IP 容易撞 60/h 未认证限额；若 env 有 GH_TOKEN 则走认证（5000/h）
+$ghHeaders = @{}
+if ($env:GH_TOKEN) {
+    $ghHeaders['Authorization'] = "Bearer $env:GH_TOKEN"
+}
 try {
-    $release = Invoke-RestMethod "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest" -UseBasicParsing
+    $release = Invoke-RestMethod "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest" -Headers $ghHeaders -UseBasicParsing
 } catch {
     Write-Host "[ERR] GitHub API query failed: $_" -ForegroundColor Red
     Write-Host "      Check network / possibly rate-limited (60/h unauth). Retry later." -ForegroundColor Yellow
