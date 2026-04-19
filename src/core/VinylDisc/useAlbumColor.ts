@@ -15,12 +15,15 @@ export interface AlbumColor {
   warm: boolean;
 }
 
-// 默认主色：明亮的 sky blue —— 没有封面 / 提取失败时的 UI 基调
+// 默认主色：深蓝灰 —— 没有封面 / 提取失败时的 UI 基调。
+// 之前用亮 sky blue，在独立面板窗口（情绪/歌词）首次打开无歌曲时，整块染成
+// 亮蓝与主窗口暗色基调不协调；改成暗色让默认态两个窗口观感一致，一旦用户
+// 选歌就会被真正的封面主色覆盖。
 const NEUTRAL: AlbumColor = {
-  r: 110,
-  g: 175,
-  b: 235,
-  css: "rgb(110, 175, 235)",
+  r: 30,
+  g: 36,
+  b: 50,
+  css: "rgb(30, 36, 50)",
   warm: false,
 };
 

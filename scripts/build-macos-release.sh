@@ -53,12 +53,23 @@ rm -rf "$ROOT_DIR/src-tauri/vendor/python/lib/python3.12/site-packages/joblib/te
 # Apple 公证要求 .app 里每一个 Mach-O 文件都用 Developer ID 签 + secure timestamp。
 # dylibbundler 和 pip wheel 里带来的共享库都是未签名的，必须在 tauri build 把
 # vendor 拷进 .app 前先就地重签，否则 notarization 会列出几百条 "not signed"。
+#
+# 所有可执行 binary 都挂 entitlements.plist 开 JIT —— node 启动时 V8 要
+# 分配 CodeRange（可写 + 可执行内存），hardened runtime 默认禁止，没 entitlements
+# 就会 "Fatal process out of memory: Failed to reserve virtual memory for CodeRange"。
+# Python 3.12 的 ctypes / cffi 同样需要 allow-unsigned-executable-memory。
+ENTITLEMENTS="$ROOT_DIR/src-tauri/entitlements.plist"
+if [ ! -f "$ENTITLEMENTS" ]; then
+    echo "❌ 缺少 $ENTITLEMENTS"
+    exit 1
+fi
 echo "🔏 预签 vendor/ 下所有 Mach-O 文件（可能弹一次钥匙串授权，点『始终允许』）…"
 SIGN_OK=0
 SIGN_FAIL=0
 while IFS= read -r -d '' f; do
     if file "$f" 2>/dev/null | grep -q "Mach-O"; then
         if codesign --force --options runtime --timestamp \
+                    --entitlements "$ENTITLEMENTS" \
                     --sign "$APPLE_SIGNING_IDENTITY" "$f" >/dev/null 2>&1; then
             SIGN_OK=$((SIGN_OK + 1))
         else
@@ -112,7 +123,9 @@ codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E "Authority|TeamIdentifier|Si
 echo ""
 echo "☁️  提交 .dmg 给 Apple 公证（阻塞至完成，最长 30 分钟）…"
 echo "   你会看到 'Current status: In Progress...' 省略号不停增加 —— 正常"
-SUBMIT_LOG=$(mktemp /tmp/melody-notarize.XXXXXX.log)
+# macOS 的 mktemp 要求 X 串必须在模板末尾，写成 .XXXXXX.log 不会替换、
+# 直接按字面名字 mkstemp，第二次 run 就会撞 "File exists"。
+SUBMIT_LOG=$(mktemp -t melody-notarize)
 # tee 让 stdout 实时显示到终端，同时落盘到 SUBMIT_LOG 便于后续 grep
 set +e
 xcrun notarytool submit "$DMG_PATH" \
