@@ -115,18 +115,31 @@ fn adapter_script_path() -> Result<PathBuf, NeteaseError> {
         return Ok(path.clone());
     }
 
-    // 1. bundled: Contents/Resources/vendor/scripts/netease_adapter.cjs
+    // 1. bundled:
+    //    macOS   —— Contents/Resources/vendor/scripts/netease_adapter.cjs
+    //    Windows —— <exe_dir>/vendor/scripts/netease_adapter.cjs（Tauri 把
+    //    bundle.resources 平铺到 exe 同级）
     let exe_candidates: Vec<PathBuf> = std::env::current_exe()
         .ok()
         .into_iter()
         .flat_map(|exe| {
             let parent = exe.parent().map(Path::to_path_buf).unwrap_or_default();
-            vec![
-                parent.join("../Resources/vendor/scripts/netease_adapter.cjs"),
-                parent.join("../scripts/netease_adapter.cjs"),
-                parent.join("../../scripts/netease_adapter.cjs"),
-                parent.join("../Resources/scripts/netease_adapter.cjs"),
-            ]
+            #[cfg(target_os = "macos")]
+            {
+                vec![
+                    parent.join("../Resources/vendor/scripts/netease_adapter.cjs"),
+                    parent.join("../scripts/netease_adapter.cjs"),
+                    parent.join("../../scripts/netease_adapter.cjs"),
+                    parent.join("../Resources/scripts/netease_adapter.cjs"),
+                ]
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                vec![
+                    parent.join("vendor/scripts/netease_adapter.cjs"),
+                    parent.join("scripts/netease_adapter.cjs"),
+                ]
+            }
         })
         .collect();
 

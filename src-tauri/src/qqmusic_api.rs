@@ -113,17 +113,31 @@ fn adapter_script_path() -> Result<PathBuf, QQMusicError> {
         return Ok(path.clone());
     }
 
+    // bundled:
+    //   macOS   —— Contents/Resources/vendor/scripts/qqmusic_adapter.cjs
+    //   Windows —— <exe_dir>/vendor/scripts/qqmusic_adapter.cjs（Tauri 把
+    //   bundle.resources 平铺到 exe 同级）
     let exe_candidates: Vec<PathBuf> = std::env::current_exe()
         .ok()
         .into_iter()
         .flat_map(|exe| {
             let parent = exe.parent().map(Path::to_path_buf).unwrap_or_default();
-            vec![
-                parent.join("../Resources/vendor/scripts/qqmusic_adapter.cjs"),
-                parent.join("../scripts/qqmusic_adapter.cjs"),
-                parent.join("../../scripts/qqmusic_adapter.cjs"),
-                parent.join("../Resources/scripts/qqmusic_adapter.cjs"),
-            ]
+            #[cfg(target_os = "macos")]
+            {
+                vec![
+                    parent.join("../Resources/vendor/scripts/qqmusic_adapter.cjs"),
+                    parent.join("../scripts/qqmusic_adapter.cjs"),
+                    parent.join("../../scripts/qqmusic_adapter.cjs"),
+                    parent.join("../Resources/scripts/qqmusic_adapter.cjs"),
+                ]
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                vec![
+                    parent.join("vendor/scripts/qqmusic_adapter.cjs"),
+                    parent.join("scripts/qqmusic_adapter.cjs"),
+                ]
+            }
         })
         .collect();
 
