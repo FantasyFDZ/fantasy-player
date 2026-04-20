@@ -60,6 +60,15 @@ impl QueueState {
         self.inner.lock().unwrap().mode = mode;
     }
 
+    /// 预览 replace 后将要播放的歌曲，但不修改队列状态。
+    pub fn preview_replace(tracks: &[Song], start_index: usize) -> Option<Song> {
+        if tracks.is_empty() {
+            return None;
+        }
+        let index = start_index.min(tracks.len() - 1);
+        Some(tracks[index].clone())
+    }
+
     /// 用新的曲目替换整个队列，current_index 指向首个播放位置。
     pub fn replace(&self, tracks: Vec<Song>, start_index: usize) -> Option<Song> {
         let mut guard = self.inner.lock().unwrap();
@@ -138,13 +147,9 @@ impl QueueState {
         guard.tracks.get(index).cloned()
     }
 
-    /// 获取下一首应该播放的歌曲。
-    ///
-    /// `auto_advance` 标记区分两种场景：
-    /// - `true`：自动切歌（当前曲目播完）——RepeatOne 时返回当前歌
-    /// - `false`：用户手动按"下一首"——RepeatOne 时仍前进到下一首
-    pub fn next(&self, auto_advance: bool) -> Option<Song> {
-        let mut guard = self.inner.lock().unwrap();
+    /// 预览下一首，但不提交 current_index。
+    pub fn peek_next(&self, auto_advance: bool) -> Option<(usize, Song)> {
+        let guard = self.inner.lock().unwrap();
         if guard.tracks.is_empty() {
             return None;
         }
@@ -158,8 +163,7 @@ impl QueueState {
                     0
                 } else {
                     let mut rng = rand::thread_rng();
-                    let choices: Vec<usize> =
-                        (0..len).filter(|&i| i != current).collect();
+                    let choices: Vec<usize> = (0..len).filter(|&i| i != current).collect();
                     *choices.choose(&mut rng).unwrap_or(&0)
                 }
             }
@@ -169,12 +173,16 @@ impl QueueState {
             }
         };
 
-        guard.current_index = Some(next_index);
-        guard.tracks.get(next_index).cloned()
+        guard
+            .tracks
+            .get(next_index)
+            .cloned()
+            .map(|song| (next_index, song))
     }
 
-    pub fn prev(&self) -> Option<Song> {
-        let mut guard = self.inner.lock().unwrap();
+    /// 预览上一首，但不提交 current_index。
+    pub fn peek_prev(&self) -> Option<(usize, Song)> {
+        let guard = self.inner.lock().unwrap();
         if guard.tracks.is_empty() {
             return None;
         }
@@ -186,8 +194,7 @@ impl QueueState {
                     0
                 } else {
                     let mut rng = rand::thread_rng();
-                    let choices: Vec<usize> =
-                        (0..len).filter(|&i| i != current).collect();
+                    let choices: Vec<usize> = (0..len).filter(|&i| i != current).collect();
                     *choices.choose(&mut rng).unwrap_or(&0)
                 }
             }
@@ -199,8 +206,38 @@ impl QueueState {
                 }
             }
         };
-        guard.current_index = Some(prev_index);
-        guard.tracks.get(prev_index).cloned()
+
+        guard
+            .tracks
+            .get(prev_index)
+            .cloned()
+            .map(|song| (prev_index, song))
+    }
+
+    pub fn set_current_index(&self, index: usize) -> Option<Song> {
+        let mut guard = self.inner.lock().unwrap();
+        if index >= guard.tracks.len() {
+            return None;
+        }
+        guard.current_index = Some(index);
+        guard.tracks.get(index).cloned()
+    }
+
+    /// 获取下一首应该播放的歌曲。
+    ///
+    /// `auto_advance` 标记区分两种场景：
+    /// - `true`：自动切歌（当前曲目播完）——RepeatOne 时返回当前歌
+    /// - `false`：用户手动按"下一首"——RepeatOne 时仍前进到下一首
+    pub fn next(&self, auto_advance: bool) -> Option<Song> {
+        let (next_index, song) = self.peek_next(auto_advance)?;
+        self.set_current_index(next_index)?;
+        Some(song)
+    }
+
+    pub fn prev(&self) -> Option<Song> {
+        let (prev_index, song) = self.peek_prev()?;
+        self.set_current_index(prev_index)?;
+        Some(song)
     }
 }
 
@@ -229,6 +266,15 @@ mod tests {
     }
 
     #[test]
+    fn preview_replace_does_not_mutate_queue() {
+        let q = QueueState::new();
+        q.replace(vec![song("a"), song("b"), song("c")], 0);
+        let preview = QueueState::preview_replace(&[song("x"), song("y")], 1).unwrap();
+        assert_eq!(preview.id, "y");
+        assert_eq!(q.current().unwrap().id, "a");
+    }
+
+    #[test]
     fn sequential_next_wraps_around() {
         let q = QueueState::new();
         q.replace(vec![song("a"), song("b"), song("c")], 0);
@@ -244,6 +290,16 @@ mod tests {
         q.set_mode(PlayMode::RepeatOne);
         assert_eq!(q.next(true).unwrap().id, "a", "auto-advance 应停留");
         assert_eq!(q.next(false).unwrap().id, "b", "手动 next 应前进");
+    }
+
+    #[test]
+    fn peek_next_does_not_commit_index() {
+        let q = QueueState::new();
+        q.replace(vec![song("a"), song("b"), song("c")], 0);
+        let (idx, next) = q.peek_next(false).unwrap();
+        assert_eq!(idx, 1);
+        assert_eq!(next.id, "b");
+        assert_eq!(q.current().unwrap().id, "a");
     }
 
     #[test]
