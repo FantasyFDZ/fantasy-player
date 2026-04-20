@@ -244,6 +244,9 @@ export interface AudioFeatures {
 // ---- auth ---------------------------------------------------------------
 
 export const api = {
+  async writeLog(level: string, module: string, message: string) {
+    return invoke<void>("write_log", { level, module, message });
+  },
   async session() {
     return invoke<Session>("auth_session");
   },
