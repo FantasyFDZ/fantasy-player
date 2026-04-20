@@ -198,9 +198,6 @@ pub async fn play_song(
     let cookie = auth.cookie();
     let id = song.id.clone();
 
-    // 替换队列为单曲
-    queue.replace(vec![song.clone()], 0);
-
     let url = tauri::async_runtime::spawn_blocking(move || {
         netease_api::song_url(&id, "standard", &cookie)
     })
@@ -212,6 +209,7 @@ pub async fn play_song(
         return Err("未能获取歌曲播放链接（可能需要登录或 VIP）".into());
     }
     player.load_url(&url.url).map_err(|e| e.to_string())?;
+    queue.replace(vec![song.clone()], 0);
     crate::logger::log("INFO", "播放", &format!("播放歌曲: {} - {}", song.name, song.artist));
     let _ = app.emit("melody://song-changed", &song);
     Ok(player.status())
@@ -295,10 +293,12 @@ pub async fn queue_replace(
     tracks: Vec<Song>,
     start_index: Option<usize>,
 ) -> Result<(), String> {
-    let start = queue
-        .replace(tracks, start_index.unwrap_or(0))
+    let start_index = start_index.unwrap_or(0);
+    let start = QueueState::preview_replace(&tracks, start_index)
         .ok_or_else(|| "空队列".to_string())?;
-    play_current(app, auth, player, start).await
+    play_current(app, auth, player, start).await?;
+    queue.replace(tracks, start_index);
+    Ok(())
 }
 
 #[tauri::command]
@@ -309,10 +309,12 @@ pub async fn next_track(
     queue: State<'_, QueueState>,
     auto_advance: Option<bool>,
 ) -> Result<Option<Song>, String> {
-    let Some(song) = queue.next(auto_advance.unwrap_or(false)) else {
+    let auto_advance = auto_advance.unwrap_or(false);
+    let Some((next_index, song)) = queue.peek_next(auto_advance) else {
         return Ok(None);
     };
     play_current(app, auth, player, song.clone()).await?;
+    queue.set_current_index(next_index);
     crate::logger::log("INFO", "播放", &format!("下一首: {} - {}", song.name, song.artist));
     Ok(Some(song))
 }
@@ -324,10 +326,11 @@ pub async fn prev_track(
     player: State<'_, PlayerState>,
     queue: State<'_, QueueState>,
 ) -> Result<Option<Song>, String> {
-    let Some(song) = queue.prev() else {
+    let Some((prev_index, song)) = queue.peek_prev() else {
         return Ok(None);
     };
     play_current(app, auth, player, song.clone()).await?;
+    queue.set_current_index(prev_index);
     crate::logger::log("INFO", "播放", &format!("上一首: {} - {}", song.name, song.artist));
     Ok(Some(song))
 }
@@ -463,11 +466,25 @@ pub async fn panel_open(
 
     // 恢复持久化的位置和大小（非 dock 模式）
     let saved = db.panel_layout_get(&panel_id).map_err(|e| e.to_string())?;
-    let width = default_width.unwrap_or(440.0);
+    let width = saved
+        .as_ref()
+        .map(|r| r.width)
+        .unwrap_or_else(|| default_width.unwrap_or(440.0));
     let height = dock_geom
         .map(|(_, _, h)| h)
         .or_else(|| saved.as_ref().map(|r| r.height))
         .unwrap_or_else(|| default_height.unwrap_or(700.0));
+
+    let open_x = if let Some((dx, _, _)) = dock_geom {
+        dx
+    } else {
+        saved.as_ref().map(|r| r.x).unwrap_or(80.0)
+    };
+    let open_y = if let Some((_, dy, _)) = dock_geom {
+        dy
+    } else {
+        saved.as_ref().map(|r| r.y).unwrap_or(80.0)
+    };
 
     let url = WebviewUrl::App(format!("index.html?panel={panel_id}").into());
     let main_window = app
@@ -483,11 +500,7 @@ pub async fn panel_open(
         .map_err(|e| e.to_string())?;
 
     // 位置：dock 模式用主窗口右边；否则恢复上次位置
-    if let Some((dx, dy, _)) = dock_geom {
-        builder = builder.position(dx, dy);
-    } else if let Some(s) = saved.as_ref() {
-        builder = builder.position(s.x, s.y);
-    }
+    builder = builder.position(open_x, open_y);
 
     let window = builder.build().map_err(|e: tauri::Error| e.to_string())?;
 
@@ -524,8 +537,8 @@ pub async fn panel_open(
     // 持久化 visible=true
     let _ = db.panel_layout_upsert(&PanelLayoutRow {
         panel_id: panel_id.clone(),
-        x: saved.as_ref().map(|r| r.x).unwrap_or(80.0),
-        y: saved.as_ref().map(|r| r.y).unwrap_or(80.0),
+        x: open_x,
+        y: open_y,
         width,
         height,
         visible: true,
