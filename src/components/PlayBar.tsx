@@ -12,6 +12,7 @@ import {
   type PlaybackStatus,
   type Song,
 } from "@/lib/api";
+import { reportError } from "@/lib/errors";
 import { QueuePopup } from "./QueuePopup";
 
 interface Props {
@@ -37,15 +38,25 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
 
   // 加载"我喜欢的"歌单 ID + 曲目列表（用于判断是否已收藏）
   useEffect(() => {
-    api.getUserPlaylists().then((playlists) => {
-      const fav = playlists.find((pl) => pl.special_type === 5);
-      if (fav) {
-        setFavPlaylistId(fav.id);
-        api.getPlaylistDetail(fav.id).then((detail) => {
-          setLikedSet(new Set(detail.tracks.map((t) => t.id)));
-        }).catch(() => {});
-      }
-    }).catch(() => {});
+    api
+      .getUserPlaylists()
+      .then((playlists) => {
+        const fav = playlists.find((pl) => pl.special_type === 5);
+        if (fav) {
+          setFavPlaylistId(fav.id);
+          api
+            .getPlaylistDetail(fav.id)
+            .then((detail) => {
+              setLikedSet(new Set(detail.tracks.map((t) => t.id)));
+            })
+            .catch((err) => {
+              reportError(`favorites_detail:${fav.id}`, err);
+            });
+        }
+      })
+      .catch((err) => {
+        reportError("favorites_playlists", err);
+      });
   }, []);
 
   // 当前歌变化时检查是否已收藏
@@ -74,8 +85,8 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
         setLikedSet((prev) => new Set(prev).add(currentSong.id));
         setLiked(true);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      reportError(`toggle_like:${currentSong.id}`, err);
     } finally {
       setLiking(false);
     }
@@ -114,7 +125,9 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
       api
         .nextTrack(true)
         .then((song) => onSongChange(song))
-        .catch(() => {});
+        .catch((err) => {
+          reportError("track_auto_advance", err);
+        });
     }).then((fn) => {
       if (cancelled) fn();
       else cleanups.push(fn);
@@ -133,8 +146,15 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
       : 0;
 
   const togglePlay = () => {
-    if (isPlaying) api.pause().catch(() => {});
-    else api.resume().catch(() => {});
+    if (isPlaying) {
+      api.pause().catch((err) => {
+        reportError("pause", err);
+      });
+    } else {
+      api.resume().catch((err) => {
+        reportError("resume", err);
+      });
+    }
   };
 
   const cycleMode = () => {
@@ -145,7 +165,10 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
           ? "repeat_one"
           : "sequential";
     setMode(next);
-    api.queueSetMode(next).catch(() => {});
+    api.queueSetMode(next).catch((err) => {
+      reportError(`queue_mode:${next}`, err);
+      setMode(mode);
+    });
   };
 
   const jumpToQueueSong = (song: Song) => {
@@ -157,11 +180,10 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
         return api.queueReplace(snap.tracks, idx);
       })
       .then(() => {
-        onSongChange(song);
         setQueueOpen(false);
       })
       .catch((err) => {
-        console.error("跳转失败:", err);
+        reportError(`queue_jump:${song.id}`, err);
       });
   };
 
@@ -189,7 +211,9 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
             api
               .prevTrack()
               .then((song) => onSongChange(song))
-              .catch(() => {})
+              .catch((err) => {
+                reportError("prev_track", err);
+              })
           }
           label="Previous"
         />
@@ -200,7 +224,9 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
             api
               .nextTrack(false)
               .then((song) => onSongChange(song))
-              .catch(() => {})
+              .catch((err) => {
+                reportError("next_track", err);
+              })
           }
           label="Next"
         />
@@ -216,7 +242,11 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
           <TimeLabel text={formatTime(status.position)} />
           <ProgressBar
             value={progressPercent}
-            onSeek={(pct) => api.seek(pct * status.duration).catch(() => {})}
+            onSeek={(pct) =>
+              api.seek(pct * status.duration).catch((err) => {
+                reportError("seek", err);
+              })
+            }
           />
           <TimeLabel text={formatTime(status.duration)} />
         </div>
@@ -226,7 +256,11 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
           volume={status.volume}
           open={volOpen}
           onToggle={() => setVolOpen((v) => !v)}
-          onChange={(v) => api.setVolume(v).catch(() => {})}
+          onChange={(v) =>
+            api.setVolume(v).catch((err) => {
+              reportError("set_volume", err);
+            })
+          }
         />
 
         {/* 模式切换 */}
@@ -270,11 +304,17 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
         </button>
 
         {/* 歌曲信息 + 队列 */}
-        <div className="relative" ref={queueWrapperRef} style={{ marginLeft: "4px" }}>
+        <div
+          className="relative"
+          ref={queueWrapperRef}
+          style={{ marginLeft: "4px" }}
+        >
           <QueuePopup
             open={queueOpen}
             onJump={jumpToQueueSong}
-            onAfterClear={() => setQueueOpen(false)}
+            onAfterClear={() => {
+              setQueueOpen(false);
+            }}
           />
           <SongInfoButton
             song={currentSong}
@@ -290,7 +330,14 @@ export function PlayBar({ currentSong, onSongChange }: Props) {
 
 function HeartIcon({ liked }: { liked: boolean }) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path
         d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
         fill={liked ? "#e74c5e" : "none"}
@@ -469,14 +516,23 @@ function PlayButton({
 
 function VolumeIcon({ volume }: { volume: number }) {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none" />
-      {volume >= 5 && (
-        <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-      )}
-      {volume >= 50 && (
-        <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-      )}
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polygon
+        points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"
+        fill="currentColor"
+        stroke="none"
+      />
+      {volume >= 5 && <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />}
+      {volume >= 50 && <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />}
       {volume < 5 && (
         <>
           <line x1="23" y1="9" x2="17" y2="15" />
@@ -490,7 +546,16 @@ function VolumeIcon({ volume }: { volume: number }) {
 function ModeIcon({ mode }: { mode: string }) {
   if (mode === "shuffle") {
     return (
-      <svg width="22" height="16" viewBox="0 0 32 28" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="22"
+        height="16"
+        viewBox="0 0 32 28"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <path d="M2 6h4c3 0 5 2 7 8s4 8 7 8h6" />
         <path d="M2 22h4c3 0 5-2 7-8s4-8 7-8h6" />
       </svg>
@@ -498,15 +563,44 @@ function ModeIcon({ mode }: { mode: string }) {
   }
   if (mode === "repeat_one") {
     return (
-      <svg width="22" height="16" viewBox="0 0 28 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width="22"
+        height="16"
+        viewBox="0 0 28 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <path d="M3 11V9a4 4 0 0 1 4-4h16" />
         <path d="M23 13v2a4 4 0 0 1-4 4H3" />
-        <text x="13" y="12" fontSize="9" fill="currentColor" stroke="none" fontWeight="bold" textAnchor="middle" dominantBaseline="central">1</text>
+        <text
+          x="13"
+          y="12"
+          fontSize="9"
+          fill="currentColor"
+          stroke="none"
+          fontWeight="bold"
+          textAnchor="middle"
+          dominantBaseline="central"
+        >
+          1
+        </text>
       </svg>
     );
   }
   return (
-    <svg width="22" height="16" viewBox="0 0 28 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="22"
+      height="16"
+      viewBox="0 0 28 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M3 11V9a4 4 0 0 1 4-4h16" />
       <path d="M23 13v2a4 4 0 0 1-4 4H3" />
     </svg>
@@ -624,10 +718,7 @@ function SongInfoButton({
           />
         )}
       </div>
-      <div
-        className="flex flex-col overflow-hidden text-left"
-        style={{ flex: 1 }}
-      >
+      <div className="flex flex-col overflow-hidden text-left" style={{ flex: 1 }}>
         <span
           className="truncate"
           style={{
