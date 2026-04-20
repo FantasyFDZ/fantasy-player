@@ -37,10 +37,22 @@ pub struct Db {
     conn: Mutex<Connection>,
 }
 
+fn configure_connection(conn: &Connection) -> Result<(), DbError> {
+    conn.execute_batch(
+        r#"
+        PRAGMA foreign_keys = ON;
+        PRAGMA busy_timeout = 5000;
+        "#,
+    )?;
+    let _ = conn.execute("PRAGMA journal_mode = WAL", []);
+    Ok(())
+}
+
 impl Db {
     pub fn open_default() -> Result<Self, DbError> {
         let path = db_path()?;
         let conn = Connection::open(&path)?;
+        configure_connection(&conn)?;
         migrate(&conn)?;
         Ok(Db {
             conn: Mutex::new(conn),
@@ -50,6 +62,7 @@ impl Db {
     #[cfg(test)]
     fn open_in_memory() -> Result<Self, DbError> {
         let conn = Connection::open_in_memory()?;
+        configure_connection(&conn)?;
         migrate(&conn)?;
         Ok(Db {
             conn: Mutex::new(conn),
@@ -65,6 +78,7 @@ impl Db {
     /// lib.rs 树中的单测，集成测试的 crate 是另一个 crate）。
     pub fn open_default_in_memory_for_test() -> Self {
         let conn = Connection::open_in_memory().expect("open in-memory");
+        configure_connection(&conn).expect("configure connection");
         migrate(&conn).expect("migrate");
         Db {
             conn: Mutex::new(conn),
@@ -513,6 +527,16 @@ mod tests {
                 .expect(table);
             assert_eq!(count, 1, "table {table} 未创建");
         }
+    }
+
+    #[test]
+    fn foreign_keys_are_enabled() {
+        let db = Db::open_in_memory().expect("open");
+        let conn = db.conn.lock().unwrap();
+        let enabled: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .expect("pragma foreign_keys");
+        assert_eq!(enabled, 1);
     }
 
     #[test]
