@@ -1,5 +1,5 @@
 // 主界面 —— 按 gramophone-final-v7.html 的 .scene 结构组装。
-//
+// 
 // 原型 scene：
 //   position: relative; overflow: hidden;
 //   display: flex; gap: 40px; align-items: center;
@@ -30,9 +30,11 @@ import { PANEL_PLUGINS } from "@/plugins";
 import {
   api,
   onPlaybackUpdate,
+  onSongChanged,
   type Song,
   type UserProfile,
 } from "@/lib/api";
+import { reportError } from "@/lib/errors";
 
 type Overlay = "none" | "playlist" | "search" | "account" | "settings";
 
@@ -79,7 +81,9 @@ function Shell() {
     let unlisten: (() => void) | undefined;
     listen("melody://album-color-request", () => {
       emit("melody://album-color-reply", albumColor);
-    }).then((fn) => { unlisten = fn; });
+    }).then((fn) => {
+      unlisten = fn;
+    });
     return () => unlisten?.();
   }, [albumColor]);
 
@@ -87,9 +91,28 @@ function Shell() {
   useQueuePreAnalyze();
 
   useEffect(() => {
-    api.session().then((session) => {
-      if (session.user) setUser(session.user);
-    });
+    api
+      .session()
+      .then((session) => {
+        if (session.user) setUser(session.user);
+      })
+      .catch((err) => {
+        reportError("session_init", err);
+      });
+  }, []);
+
+  useEffect(() => {
+    api
+      .queueSnapshot()
+      .then((snapshot) => {
+        const currentIndex = snapshot.current_index;
+        setCurrentSong(
+          currentIndex === null ? null : (snapshot.tracks[currentIndex] ?? null),
+        );
+      })
+      .catch((err) => {
+        reportError("queue_snapshot_init", err);
+      });
   }, []);
 
   useEffect(() => {
@@ -107,15 +130,29 @@ function Shell() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    onSongChanged((song) => {
+      if (!cancelled) {
+        setCurrentSong(song);
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   const handlePlay = useCallback(async (song: Song, queue: Song[]) => {
-    // 先调后端 —— 只有后端确认成功（URL 拿到、mpv 加载成功）之后
-    // 才更新 UI 的 currentSong，避免 UI 显示一首歌而实际播放另一首。
     try {
       await api.queueReplace(queue, 0);
-      setCurrentSong(song);
       setOverlay("none");
     } catch (err) {
-      console.error("播放失败:", err);
+      reportError(`play_song:${song.id}`, err);
       // UI 保持不变 —— 继续显示上一首正在播放的歌
     }
   }, []);
@@ -124,7 +161,7 @@ function Shell() {
     try {
       await api.queueAppend(song);
     } catch (err) {
-      console.error("加入队列失败:", err);
+      reportError(`queue_append:${song.id}`, err);
     }
   }, []);
 
@@ -138,103 +175,97 @@ function Shell() {
     >
       {/* 顶部栏 */}
       <header
-          className="relative flex items-center justify-between px-8 py-3"
-          style={{ zIndex: 20 }}
-          data-tauri-drag-region
+        className="relative flex items-center justify-between px-8 py-3"
+        style={{ zIndex: 20 }}
+        data-tauri-drag-region
+      >
+        {/* 左侧：账号（原 BrandMenu 位置） */}
+        <div style={{ pointerEvents: "auto" }}>
+          <HeaderButton
+            active={overlay === "account"}
+            onClick={() =>
+              setOverlay((o) => (o === "account" ? "none" : "account"))
+            }
+            label={user ? user.nickname : "登录"}
+          />
+        </div>
+        <div
+          className="flex items-center gap-4"
+          style={{ pointerEvents: "auto" }}
         >
-          {/* 左侧：账号（原 BrandMenu 位置） */}
-          <div style={{ pointerEvents: "auto" }}>
-            <HeaderButton
-              active={overlay === "account"}
-              onClick={() =>
-                setOverlay((o) => (o === "account" ? "none" : "account"))
-              }
-              label={user ? user.nickname : "登录"}
-            />
-          </div>
+          <HeaderButton
+            active={overlay === "playlist"}
+            onClick={() =>
+              setOverlay((o) => (o === "playlist" ? "none" : "playlist"))
+            }
+            label="歌单"
+          />
+          <HeaderButton
+            active={overlay === "search"}
+            onClick={() =>
+              setOverlay((o) => (o === "search" ? "none" : "search"))
+            }
+            label="搜索"
+          />
+          <HeaderButton
+            active={panels.isOpen("music_analysis")}
+            onClick={() => panels.toggle("music_analysis")}
+            label="情绪"
+          />
+          {/* 窗口控制：设置 + 最小化 + 关闭 */}
           <div
-            className="flex items-center gap-4"
-            style={{ pointerEvents: "auto" }}
+            className="flex items-center"
+            style={{ gap: 4, marginLeft: 8 }}
           >
-            <HeaderButton
-              active={overlay === "playlist"}
+            <WindowButton
               onClick={() =>
-                setOverlay((o) => (o === "playlist" ? "none" : "playlist"))
+                setOverlay((o) => (o === "settings" ? "none" : "settings"))
               }
-              label="歌单"
+              glyph="⚙"
+              hoverColor="rgba(255,255,255,0.1)"
+              label="模型设置"
             />
-            <HeaderButton
-              active={overlay === "search"}
-              onClick={() =>
-                setOverlay((o) => (o === "search" ? "none" : "search"))
-              }
-              label="搜索"
+            <WindowButton
+              onClick={() => getCurrentWindow().minimize()}
+              glyph="−"
+              hoverColor="rgba(255,255,255,0.1)"
+              label="最小化"
             />
-            <HeaderButton
-              active={panels.isOpen("music_analysis")}
-              onClick={() => panels.toggle("music_analysis")}
-              label="情绪"
+            <WindowButton
+              onClick={() => getCurrentWindow().close()}
+              glyph="✕"
+              hoverColor="rgba(255, 80, 80, 0.7)"
+              label="关闭"
             />
-            {/* 窗口控制：设置 + 最小化 + 关闭 */}
-            <div
-              className="flex items-center"
-              style={{ gap: 4, marginLeft: 8 }}
-            >
-              <WindowButton
-                onClick={() =>
-                  setOverlay((o) => (o === "settings" ? "none" : "settings"))
-                }
-                glyph="⚙"
-                hoverColor="rgba(255,255,255,0.1)"
-                label="模型设置"
-              />
-              <WindowButton
-                onClick={() => getCurrentWindow().minimize()}
-                glyph="−"
-                hoverColor="rgba(255,255,255,0.1)"
-                label="最小化"
-              />
-              <WindowButton
-                onClick={() => getCurrentWindow().close()}
-                glyph="✕"
-                hoverColor="rgba(255, 80, 80, 0.7)"
-                label="关闭"
-              />
-            </div>
           </div>
-        </header>
+        </div>
+      </header>
 
-        {/* scene —— 整个主舞台 */}
-        <main
-          className="relative flex-1 overflow-hidden"
-          style={{ padding: "20px" }}
-        >
+      {/* scene —— 整个主舞台 */}
+      <main
+        className="relative flex-1 overflow-hidden"
+        style={{ padding: "20px" }}
+      >
+        <div className="relative flex h-full" style={{ zIndex: 3 }}>
+          {/* 左侧：唱片 */}
           <div
-            className="relative flex h-full"
-            style={{ zIndex: 3 }}
+            className="flex items-center justify-center"
+            style={{ width: "55%" }}
           >
-            {/* 左侧：唱片 */}
-            <div
-              className="flex items-center justify-center"
-              style={{ width: "55%" }}
-            >
-              <VinylDisc
-                coverUrl={currentSong?.cover_url}
-                playing={playing}
-              />
-            </div>
-            {/* 右侧：歌词 */}
-            <div
-              className="flex flex-col"
-              style={{ width: "45%", paddingLeft: "20px" }}
-            >
-              <Lyrics song={currentSong} />
-            </div>
+            <VinylDisc coverUrl={currentSong?.cover_url} playing={playing} />
           </div>
-        </main>
+          {/* 右侧：歌词 */}
+          <div
+            className="flex flex-col"
+            style={{ width: "45%", paddingLeft: "20px" }}
+          >
+            <Lyrics song={currentSong} />
+          </div>
+        </div>
+      </main>
 
-        {/* PlayBar */}
-        <PlayBar currentSong={currentSong} onSongChange={setCurrentSong} />
+      {/* PlayBar */}
+      <PlayBar currentSong={currentSong} onSongChange={setCurrentSong} />
 
       {/* overlay */}
       {overlay !== "none" && (
@@ -261,7 +292,6 @@ function Shell() {
           {overlay === "settings" && <SettingsPanel />}
         </Overlay>
       )}
-
     </div>
   );
 }
