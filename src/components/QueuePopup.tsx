@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type QueueSnapshot, type Song } from "@/lib/api";
+import { reportError } from "@/lib/errors";
 
 interface Props {
   open: boolean;
@@ -24,7 +25,10 @@ export function QueuePopup({ open, onJump, onAfterClear }: Props) {
     api
       .queueSnapshot()
       .then(setSnapshot)
-      .catch(() => setSnapshot(null));
+      .catch((err) => {
+        setSnapshot(null);
+        reportError("queue_popup_snapshot", err);
+      });
   }, [open]);
 
   if (!open) return null;
@@ -73,8 +77,19 @@ export function QueuePopup({ open, onJump, onAfterClear }: Props) {
         <button
           type="button"
           onClick={() => {
-            api.queueClear().catch(() => {});
-            onAfterClear?.();
+            api
+              .queueClear()
+              .then(() => {
+                setSnapshot({
+                  tracks: [],
+                  current_index: null,
+                  mode: snapshot?.mode ?? "sequential",
+                });
+                onAfterClear?.();
+              })
+              .catch((err) => {
+                reportError("queue_clear", err);
+              });
           }}
           className="font-mono"
           style={{
