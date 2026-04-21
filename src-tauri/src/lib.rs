@@ -12,6 +12,7 @@ pub mod player;
 pub mod qq_auth;
 pub mod qqmusic_api;
 pub mod queue;
+pub mod secrets;
 pub mod sync;
 
 use tauri::Manager;
