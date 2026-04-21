@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' asset: data: blob:; img-src 'self' asset: data: blob: https: http:; media-src 'self' asset: data: blob: https: http:; connect-src 'self' ipc: https: http: ws: wss:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' asset: data:; object-src 'none'; frame-src 'none'"
     }
   },
   "bundle": {
