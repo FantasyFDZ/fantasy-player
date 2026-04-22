@@ -2,7 +2,8 @@
 //!
 //! 职责：
 //! - 通过 [`crate::netease_api`] 发起 QR 码登录流程
-//! - 将 cookie 持久化到 app data 目录
+//! - 将登录态元数据持久化到 app data 目录
+//! - 将真实凭证单独存放到权限更严格的本地文件
 //! - 为其他模块提供当前 cookie 与当前用户信息
 //!
 //! 此模块是整个后端的 cookie 真相源。`netease_api` 本身无状态，所有
@@ -29,6 +30,23 @@ fn config_dir() -> Result<PathBuf, AuthError> {
 
 fn session_path() -> Result<PathBuf, AuthError> {
     Ok(config_dir()?.join("session.json"))
+}
+
+fn credential_path() -> Result<PathBuf, AuthError> {
+    Ok(config_dir()?.join("session.cookie"))
+}
+
+#[cfg(unix)]
+fn restrict_file_permissions(path: &PathBuf) -> Result<(), AuthError> {
+    use std::os::unix::fs::PermissionsExt;
+    let perms = fs::Permissions::from_mode(0o600);
+    fs::set_permissions(path, perms)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn restrict_file_permissions(_path: &PathBuf) -> Result<(), AuthError> {
+    Ok(())
 }
 
 // ---- types -----------------------------------------------------------------
@@ -104,7 +122,9 @@ impl AuthState {
     }
 
     pub fn snapshot(&self) -> Session {
-        self.inner.lock().unwrap().clone()
+        let mut session = self.inner.lock().unwrap().clone();
+        session.cookie.clear();
+        session
     }
 
     fn update<F>(&self, mutator: F) -> Result<(), AuthError>
@@ -248,18 +268,49 @@ fn parse_user(resp: &serde_json::Value) -> Result<UserProfile, AuthError> {
 
 fn load_session() -> Result<Session, AuthError> {
     let path = session_path()?;
-    if !path.exists() {
-        return Ok(Session::default());
-    }
-    let raw = fs::read_to_string(&path)?;
-    let session: Session = serde_json::from_str(&raw).unwrap_or_default();
+    let mut session = if !path.exists() {
+        Session::default()
+    } else {
+        let raw = fs::read_to_string(&path)?;
+        serde_json::from_str(&raw).unwrap_or_default()
+    };
+    session.cookie = load_credential()?.unwrap_or_default();
     Ok(session)
 }
 
 fn save_session(session: &Session) -> Result<(), AuthError> {
     let path = session_path()?;
-    let raw = serde_json::to_string_pretty(session)?;
+    let mut persisted = session.clone();
+    let credential = persisted.cookie.clone();
+    persisted.cookie.clear();
+    let raw = serde_json::to_string_pretty(&persisted)?;
     fs::write(&path, raw)?;
+    save_credential(&credential)
+}
+
+fn load_credential() -> Result<Option<String>, AuthError> {
+    let path = credential_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let value = fs::read_to_string(&path)?;
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(value))
+    }
+}
+
+fn save_credential(value: &str) -> Result<(), AuthError> {
+    let path = credential_path()?;
+    if value.is_empty() {
+        if path.exists() {
+            fs::remove_file(&path)?;
+        }
+        return Ok(());
+    }
+    fs::write(&path, value)?;
+    restrict_file_permissions(&path)?;
     Ok(())
 }
 
