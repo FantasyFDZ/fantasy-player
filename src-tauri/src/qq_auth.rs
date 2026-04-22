@@ -2,7 +2,8 @@
 //!
 //! 职责：
 //! - 接受用户粘贴的 QQ Music cookie 并验证有效性
-//! - 将 cookie 持久化到 `~/.config/melody/qq_session.json`
+//! - 将登录态元数据持久化到 `~/.config/melody/qq_session.json`
+//! - 将真实凭证单独存放到权限更严格的本地文件
 //! - 为其他模块提供当前 cookie 与用户信息
 //!
 //! QQ 音乐的 ptqrlogin 端点会拦截非浏览器请求，因此不走 QR 扫码流程，
@@ -28,6 +29,23 @@ fn config_dir() -> Result<PathBuf, QQAuthError> {
 
 fn session_path() -> Result<PathBuf, QQAuthError> {
     Ok(config_dir()?.join("qq_session.json"))
+}
+
+fn credential_path() -> Result<PathBuf, QQAuthError> {
+    Ok(config_dir()?.join("qq_session.cookie"))
+}
+
+#[cfg(unix)]
+fn restrict_file_permissions(path: &PathBuf) -> Result<(), QQAuthError> {
+    use std::os::unix::fs::PermissionsExt;
+    let perms = fs::Permissions::from_mode(0o600);
+    fs::set_permissions(path, perms)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn restrict_file_permissions(_path: &PathBuf) -> Result<(), QQAuthError> {
+    Ok(())
 }
 
 // ---- types -----------------------------------------------------------------
@@ -87,7 +105,9 @@ impl QQAuthState {
     }
 
     pub fn snapshot(&self) -> QQSession {
-        self.inner.lock().unwrap().clone()
+        let mut session = self.inner.lock().unwrap().clone();
+        session.cookie.clear();
+        session
     }
 
     fn update<F>(&self, mutator: F) -> Result<(), QQAuthError>
@@ -242,18 +262,49 @@ pub fn extract_uin(cookie: &str) -> Option<String> {
 
 fn load_session() -> Result<QQSession, QQAuthError> {
     let path = session_path()?;
-    if !path.exists() {
-        return Ok(QQSession::default());
-    }
-    let raw = fs::read_to_string(&path)?;
-    let session: QQSession = serde_json::from_str(&raw).unwrap_or_default();
+    let mut session = if !path.exists() {
+        QQSession::default()
+    } else {
+        let raw = fs::read_to_string(&path)?;
+        serde_json::from_str(&raw).unwrap_or_default()
+    };
+    session.cookie = load_credential()?.unwrap_or_default();
     Ok(session)
 }
 
 fn save_session(session: &QQSession) -> Result<(), QQAuthError> {
     let path = session_path()?;
-    let raw = serde_json::to_string_pretty(session)?;
+    let mut persisted = session.clone();
+    let credential = persisted.cookie.clone();
+    persisted.cookie.clear();
+    let raw = serde_json::to_string_pretty(&persisted)?;
     fs::write(&path, raw)?;
+    save_credential(&credential)
+}
+
+fn load_credential() -> Result<Option<String>, QQAuthError> {
+    let path = credential_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let value = fs::read_to_string(&path)?;
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(value))
+    }
+}
+
+fn save_credential(value: &str) -> Result<(), QQAuthError> {
+    let path = credential_path()?;
+    if value.is_empty() {
+        if path.exists() {
+            fs::remove_file(&path)?;
+        }
+        return Ok(());
+    }
+    fs::write(&path, value)?;
+    restrict_file_permissions(&path)?;
     Ok(())
 }
 
