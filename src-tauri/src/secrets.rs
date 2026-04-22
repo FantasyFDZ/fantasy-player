@@ -21,8 +21,13 @@ pub struct ProviderSecretRow {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-struct ProviderSecretsFile {
+struct SecretsFile {
+    #[serde(default)]
     providers: Vec<ProviderSecretRow>,
+    #[serde(default)]
+    netease_credential: String,
+    #[serde(default)]
+    qq_credential: String,
 }
 
 fn config_dir() -> Result<PathBuf, SecretStoreError> {
@@ -33,7 +38,7 @@ fn config_dir() -> Result<PathBuf, SecretStoreError> {
 }
 
 fn secrets_path() -> Result<PathBuf, SecretStoreError> {
-    Ok(config_dir()?.join("provider_secrets.json"))
+    Ok(config_dir()?.join("secrets.json"))
 }
 
 #[cfg(unix)]
@@ -49,17 +54,17 @@ fn restrict_file_permissions(_path: &PathBuf) -> Result<(), SecretStoreError> {
     Ok(())
 }
 
-fn load_file() -> Result<ProviderSecretsFile, SecretStoreError> {
+fn load_file() -> Result<SecretsFile, SecretStoreError> {
     let path = secrets_path()?;
     if !path.exists() {
-        return Ok(ProviderSecretsFile::default());
+        return Ok(SecretsFile::default());
     }
     let raw = fs::read_to_string(&path)?;
     let parsed = serde_json::from_str(&raw).unwrap_or_default();
     Ok(parsed)
 }
 
-fn save_file(file: &ProviderSecretsFile) -> Result<(), SecretStoreError> {
+fn save_file(file: &SecretsFile) -> Result<(), SecretStoreError> {
     let path = secrets_path()?;
     let raw = serde_json::to_string_pretty(file)?;
     fs::write(&path, raw)?;
@@ -73,12 +78,15 @@ pub fn get_provider_api_key(provider_id: &str) -> Result<Option<String>, SecretS
         .providers
         .into_iter()
         .find(|row| row.provider_id == provider_id)
-        .map(|row| row.api_key))
+        .map(|row| row.api_key)
+        .filter(|value| !value.is_empty()))
 }
 
 pub fn set_provider_api_key(provider_id: &str, api_key: &str) -> Result<(), SecretStoreError> {
     let mut file = load_file()?;
-    if let Some(row) = file
+    if api_key.is_empty() {
+        file.providers.retain(|row| row.provider_id != provider_id);
+    } else if let Some(row) = file
         .providers
         .iter_mut()
         .find(|row| row.provider_id == provider_id)
@@ -96,5 +104,35 @@ pub fn set_provider_api_key(provider_id: &str, api_key: &str) -> Result<(), Secr
 pub fn delete_provider_api_key(provider_id: &str) -> Result<(), SecretStoreError> {
     let mut file = load_file()?;
     file.providers.retain(|row| row.provider_id != provider_id);
+    save_file(&file)
+}
+
+pub fn get_netease_credential() -> Result<Option<String>, SecretStoreError> {
+    let file = load_file()?;
+    if file.netease_credential.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(file.netease_credential))
+    }
+}
+
+pub fn set_netease_credential(value: &str) -> Result<(), SecretStoreError> {
+    let mut file = load_file()?;
+    file.netease_credential = value.to_string();
+    save_file(&file)
+}
+
+pub fn get_qq_credential() -> Result<Option<String>, SecretStoreError> {
+    let file = load_file()?;
+    if file.qq_credential.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(file.qq_credential))
+    }
+}
+
+pub fn set_qq_credential(value: &str) -> Result<(), SecretStoreError> {
+    let mut file = load_file()?;
+    file.qq_credential = value.to_string();
     save_file(&file)
 }
