@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 
 use crate::db::{Db, ProviderRow};
+use crate::secrets;
 
 // 默认实现保证可以 manage 到 Tauri state 里
 impl Default for LlmClient {
@@ -159,6 +160,8 @@ pub enum LlmError {
     Json(#[from] serde_json::Error),
     #[error("DB 错误: {0}")]
     Db(#[from] crate::db::DbError),
+    #[error("Secret store 错误: {0}")]
+    SecretStore(String),
     #[error("LLM API 错误 (status {status}): {body}")]
     Api { status: u16, body: String },
     #[error("响应格式异常: {0}")]
@@ -180,21 +183,40 @@ impl LlmClient {
         LlmClient { http }
     }
 
+    fn hydrate_provider_secret(provider: &mut Provider) -> Result<(), LlmError> {
+        let secret = secrets::get_provider_api_key(&provider.id)
+            .map_err(|e| LlmError::SecretStore(e.to_string()))?;
+        provider.api_key = secret.unwrap_or_default();
+        Ok(())
+    }
+
     // ---- provider management ----
     pub fn list_providers(&self, db: &Db) -> Result<Vec<Provider>, LlmError> {
-        Ok(db
-            .provider_list()?
+        db.provider_list()?
             .into_iter()
-            .map(Provider::from_row)
-            .collect())
+            .map(|row| {
+                let mut provider = Provider::from_row(row);
+                Self::hydrate_provider_secret(&mut provider)?;
+                Ok(provider)
+            })
+            .collect()
     }
 
     pub fn upsert_provider(&self, db: &Db, provider: Provider) -> Result<(), LlmError> {
-        Ok(db.provider_upsert(&provider.into_row())?)
+        let secret = provider.api_key.clone();
+        let mut row = provider.into_row();
+        row.api_key.clear();
+        db.provider_upsert(&row)?;
+        secrets::set_provider_api_key(&row.id, &secret)
+            .map_err(|e| LlmError::SecretStore(e.to_string()))?;
+        Ok(())
     }
 
     pub fn delete_provider(&self, db: &Db, id: &str) -> Result<(), LlmError> {
-        Ok(db.provider_delete(id)?)
+        db.provider_delete(id)?;
+        secrets::delete_provider_api_key(id)
+            .map_err(|e| LlmError::SecretStore(e.to_string()))?;
+        Ok(())
     }
 
     // ---- request routing ----
@@ -202,7 +224,8 @@ impl LlmClient {
         let row = db
             .provider_get(&req.provider_id)?
             .ok_or_else(|| LlmError::ProviderNotFound(req.provider_id.clone()))?;
-        let provider = Provider::from_row(row);
+        let mut provider = Provider::from_row(row);
+        Self::hydrate_provider_secret(&mut provider)?;
 
         match provider.protocol {
             Protocol::Openai => self.request_openai(&provider, req).await,
@@ -240,7 +263,8 @@ impl LlmClient {
         let row = db
             .provider_get(&req.provider_id)?
             .ok_or_else(|| LlmError::ProviderNotFound(req.provider_id.clone()))?;
-        let provider = Provider::from_row(row);
+        let mut provider = Provider::from_row(row);
+        Self::hydrate_provider_secret(&mut provider)?;
 
         match provider.protocol {
             Protocol::Openai => {
