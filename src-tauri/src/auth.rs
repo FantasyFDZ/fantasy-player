@@ -3,7 +3,7 @@
 //! 职责：
 //! - 通过 [`crate::netease_api`] 发起 QR 码登录流程
 //! - 将登录态元数据持久化到 app data 目录
-//! - 将真实凭证单独存放到权限更严格的本地文件
+//! - 将真实凭证统一存放到 secrets 模块管理的本地 secret 文件
 //! - 为其他模块提供当前 cookie 与当前用户信息
 //!
 //! 此模块是整个后端的 cookie 真相源。`netease_api` 本身无状态，所有
@@ -18,6 +18,7 @@ use serde_json::json;
 use thiserror::Error;
 
 use crate::netease_api::{invoke, NeteaseError};
+use crate::secrets;
 
 // ---- paths -----------------------------------------------------------------
 
@@ -32,23 +33,6 @@ fn session_path() -> Result<PathBuf, AuthError> {
     Ok(config_dir()?.join("session.json"))
 }
 
-fn credential_path() -> Result<PathBuf, AuthError> {
-    Ok(config_dir()?.join("session.cookie"))
-}
-
-#[cfg(unix)]
-fn restrict_file_permissions(path: &PathBuf) -> Result<(), AuthError> {
-    use std::os::unix::fs::PermissionsExt;
-    let perms = fs::Permissions::from_mode(0o600);
-    fs::set_permissions(path, perms)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn restrict_file_permissions(_path: &PathBuf) -> Result<(), AuthError> {
-    Ok(())
-}
-
 // ---- types -----------------------------------------------------------------
 
 #[derive(Debug, Error)]
@@ -61,6 +45,8 @@ pub enum AuthError {
     Json(#[from] serde_json::Error),
     #[error("网易云适配器调用失败: {0}")]
     Netease(#[from] NeteaseError),
+    #[error("Secret store 错误: {0}")]
+    SecretStore(String),
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -274,7 +260,9 @@ fn load_session() -> Result<Session, AuthError> {
         let raw = fs::read_to_string(&path)?;
         serde_json::from_str(&raw).unwrap_or_default()
     };
-    session.cookie = load_credential()?.unwrap_or_default();
+    session.cookie = secrets::get_netease_credential()
+        .map_err(|e| AuthError::SecretStore(e.to_string()))?
+        .unwrap_or_default();
     Ok(session)
 }
 
@@ -285,33 +273,8 @@ fn save_session(session: &Session) -> Result<(), AuthError> {
     persisted.cookie.clear();
     let raw = serde_json::to_string_pretty(&persisted)?;
     fs::write(&path, raw)?;
-    save_credential(&credential)
-}
-
-fn load_credential() -> Result<Option<String>, AuthError> {
-    let path = credential_path()?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    let value = fs::read_to_string(&path)?;
-    if value.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(value))
-    }
-}
-
-fn save_credential(value: &str) -> Result<(), AuthError> {
-    let path = credential_path()?;
-    if value.is_empty() {
-        if path.exists() {
-            fs::remove_file(&path)?;
-        }
-        return Ok(());
-    }
-    fs::write(&path, value)?;
-    restrict_file_permissions(&path)?;
-    Ok(())
+    secrets::set_netease_credential(&credential)
+        .map_err(|e| AuthError::SecretStore(e.to_string()))
 }
 
 #[cfg(test)]
