@@ -3,7 +3,7 @@
 //! 职责：
 //! - 接受用户粘贴的 QQ Music cookie 并验证有效性
 //! - 将登录态元数据持久化到 `~/.config/melody/qq_session.json`
-//! - 将真实凭证单独存放到权限更严格的本地文件
+//! - 将真实凭证统一存放到 secrets 模块管理的本地 secret 文件
 //! - 为其他模块提供当前 cookie 与用户信息
 //!
 //! QQ 音乐的 ptqrlogin 端点会拦截非浏览器请求，因此不走 QR 扫码流程，
@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::qqmusic_api::{self, QQMusicError};
+use crate::secrets;
 
 // ---- paths -----------------------------------------------------------------
 
@@ -29,23 +30,6 @@ fn config_dir() -> Result<PathBuf, QQAuthError> {
 
 fn session_path() -> Result<PathBuf, QQAuthError> {
     Ok(config_dir()?.join("qq_session.json"))
-}
-
-fn credential_path() -> Result<PathBuf, QQAuthError> {
-    Ok(config_dir()?.join("qq_session.cookie"))
-}
-
-#[cfg(unix)]
-fn restrict_file_permissions(path: &PathBuf) -> Result<(), QQAuthError> {
-    use std::os::unix::fs::PermissionsExt;
-    let perms = fs::Permissions::from_mode(0o600);
-    fs::set_permissions(path, perms)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn restrict_file_permissions(_path: &PathBuf) -> Result<(), QQAuthError> {
-    Ok(())
 }
 
 // ---- types -----------------------------------------------------------------
@@ -62,6 +46,8 @@ pub enum QQAuthError {
     QQMusic(#[from] QQMusicError),
     #[error("cookie 无效或已过期")]
     InvalidCookie,
+    #[error("Secret store 错误: {0}")]
+    SecretStore(String),
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -268,7 +254,9 @@ fn load_session() -> Result<QQSession, QQAuthError> {
         let raw = fs::read_to_string(&path)?;
         serde_json::from_str(&raw).unwrap_or_default()
     };
-    session.cookie = load_credential()?.unwrap_or_default();
+    session.cookie = secrets::get_qq_credential()
+        .map_err(|e| QQAuthError::SecretStore(e.to_string()))?
+        .unwrap_or_default();
     Ok(session)
 }
 
@@ -279,33 +267,8 @@ fn save_session(session: &QQSession) -> Result<(), QQAuthError> {
     persisted.cookie.clear();
     let raw = serde_json::to_string_pretty(&persisted)?;
     fs::write(&path, raw)?;
-    save_credential(&credential)
-}
-
-fn load_credential() -> Result<Option<String>, QQAuthError> {
-    let path = credential_path()?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    let value = fs::read_to_string(&path)?;
-    if value.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(value))
-    }
-}
-
-fn save_credential(value: &str) -> Result<(), QQAuthError> {
-    let path = credential_path()?;
-    if value.is_empty() {
-        if path.exists() {
-            fs::remove_file(&path)?;
-        }
-        return Ok(());
-    }
-    fs::write(&path, value)?;
-    restrict_file_permissions(&path)?;
-    Ok(())
+    secrets::set_qq_credential(&credential)
+        .map_err(|e| QQAuthError::SecretStore(e.to_string()))
 }
 
 #[cfg(test)]
